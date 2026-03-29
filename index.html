@@ -209,12 +209,13 @@ function TimelineBar({currentMin}){
 }
 
 // ── SIGNAL CARD ───────────────────────────────────────────────────────────
-function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal}){
+function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings}){
   const buy=signal.direction==="BUY";
   const col=buy?"#00e676":"#ff5252";
   const cfg=STRAT_CFG[signal.strategy]||STRAT_CFG.FCB;
   const[qty,setQty]=useState(()=>{
-    const maxByRisk=Math.max(1,Math.floor((wallet*2/100)/signal.risk));
+    const riskPct=settings?.riskPct||2;
+    const maxByRisk=Math.max(1,Math.floor((wallet*riskPct/100)/signal.risk));
     const maxByWal =availBal>0?Math.max(1,Math.floor(availBal/signal.entry)):maxByRisk;
     return Math.min(maxByRisk,maxByWal);
   });
@@ -898,7 +899,7 @@ function FCBBotV6(){
             )}
             {signals.map((s,i)=>(
               <div key={i} style={{animation:`fadeIn .4s ease ${i*.08}s both`}}>
-                <SignalCard signal={s} onTrade={executeTrade} trading={trading} paperMode={paperMode} wallet={wallet||5000} availBal={availBal||0}/>
+                <SignalCard signal={s} onTrade={executeTrade} trading={trading} paperMode={paperMode} wallet={wallet||5000} availBal={availBal||0} settings={settings}/>
               </div>
             ))}
           </>
