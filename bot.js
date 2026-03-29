@@ -290,6 +290,10 @@ function dailyPnL() {
   return trades.filter(t => t.date === todayStr()).reduce((s, t) => s + (t.pnl || 0), 0);
 }
 
+function dailyLivePnL() {
+  return trades.filter(t => t.date === todayStr() && !t.paper).reduce((s, t) => s + (t.pnl || 0), 0);
+}
+
 // BUG #5 FIX: SELL trades (shorts) don't require capital — exclude from locked
 function lockedCapital() {
   return trades
@@ -299,7 +303,7 @@ function lockedCapital() {
 
 // BUG #11 FIX: available balance shrinks as trades lock capital
 function availableBalance() {
-  return WAL() + dailyPnL() - lockedCapital();
+  return WAL() + dailyLivePnL() - lockedCapital();
 }
 
 // BUG #2 + #11 FIX: qty capped by BOTH risk% AND available capital
