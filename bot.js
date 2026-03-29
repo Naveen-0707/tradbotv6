@@ -80,6 +80,7 @@ const WAL          = () => CFG.wallet           || 5000;
 const SCORE_THRESH = () => CFG.scoreThreshold   || 6;
 const STOCK_TIER   = () => CFG.stockTier        || "tier1+2";
 const NIFTY_FILTER = () => CFG.niftyFilter      !== false;
+const COSTS        = () => CFG.brokeragePerOrder || 20; // ₹ per order leg (entry + exit = 2 legs)
 
 // ─── API ENDPOINTS ────────────────────────────────────────────────────────────
 const API_HOST = "api.upstox.com";
@@ -382,20 +383,21 @@ async function simulatePaperOCO() {
     const slHit     = trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl;
 
     if (targetHit) {
-      const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2));
+      const charges = COSTS() * 2;
+      const pnl = +((trade.risk * trade.qty * (trade.rrMult || 2)) - charges);
       trade.status = "TARGET_HIT";
       trade.pnl    = pnl;
-      log(`🎯 PAPER TARGET: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)}`, "TRADE");
-      notify(`🎯 Paper Target — ${trade.name}`, `+₹${pnl.toFixed(0)}`);
+      log(`🎯 PAPER TARGET: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)} (after ₹${charges} charges)`, "TRADE");
+      notify(`🎯 Paper Target — ${trade.name}`, `+₹${pnl.toFixed(0)} net`);
     } else if (slHit) {
-      const pnl = -(trade.risk * trade.qty);
+      const charges = COSTS() * 2;
+      const pnl = -((trade.risk * trade.qty) + charges);
       trade.status = "STOPPED_OUT";
       trade.pnl    = pnl;
-      log(`🛑 PAPER SL: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)}`, "WARN");
-      notify(`🛑 Paper SL — ${trade.name}`, `-₹${Math.abs(pnl).toFixed(0)}`);
+      log(`🛑 PAPER SL: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)} (incl ₹${charges} charges)`, "WARN");
+      notify(`🛑 Paper SL — ${trade.name}`, `-₹${Math.abs(pnl).toFixed(0)} net`);
     }
   }
-
   if (changed) saveTrades();
 }
 
