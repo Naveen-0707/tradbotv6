@@ -432,7 +432,7 @@ function isStale(candles, maxMinutes = 3) {
   if (!Array.isArray(candles) || candles.length === 0) return true;
   const lastTs = new Date(candles[candles.length - 1].ts).getTime();
   const diff = Date.now() - lastTs;
-  return diff > maxMinutes * 60000 && diff < 12 * 3600000;
+  return diff > maxMinutes * 60000 && diff < 6 * 3600000;
 }
 
 // ─── EXPORTS ──────────────────────────────────────────────────────────────────
