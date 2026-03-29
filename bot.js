@@ -115,7 +115,7 @@ function notifyPersistent(text) {
 }
 
 // ─── IST UTILITIES ────────────────────────────────────────────────────────────
-const istNow     = () => new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+const istNow     = () => new Date(Date.now() + 5.5 * 3600000);
 const istTime    = () => istNow().toLocaleTimeString("en-IN");
 const minOfDay   = () => { const t = istNow(); return t.getHours() * 60 + t.getMinutes(); };
 const istDateStr = (d) => {
