@@ -1015,7 +1015,7 @@ const STOCKS = {
     { name: "BLUESTARCO",   key: "NSE_EQ|INE386A01015" },
     { name: "POLYCAB",      key: "NSE_EQ|INE455K01017" },
     { name: "ASTRAL",       key: "NSE_EQ|INE006I01046" },
-    { name: "DEEPAKFERT",   key: "NSE_EQ|INE042A01014" },
+    { name: "DEEPAKFERT",   key: "NSE_EQ|INE501A01019" },
     { name: "CHAMBLFERT",   key: "NSE_EQ|INE085A01013" },
     { name: "GSFC",         key: "NSE_EQ|INE026A01025" },
     { name: "GLENMARK",     key: "NSE_EQ|INE935A01035" },
