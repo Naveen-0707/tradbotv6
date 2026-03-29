@@ -48,6 +48,12 @@ const {
 // Round to 2 decimal places — keeps signal prices clean
 const r2 = v => +v.toFixed(2);
 
+function atrNormalizedRisk(candles) {
+  const atrVals = calcATR(candles, 14);
+  if (!atrVals.length) return 0;
+  return (atrVals[atrVals.length - 1] / candles[candles.length - 1].c) * 100;
+}
+
 // Safe last N items of array (returns [] if not enough)
 const tail = (arr, n) => (arr.length >= n ? arr.slice(-n) : arr);
 
@@ -66,6 +72,13 @@ function hasOpenPosition(name, trades) {
     t => t.name === name && (t.status === "OPEN" || t.status === "PAPER")
   );
 }
+
+const lastLossTime = {};
+function inCooldown(name, cooldownMinutes = 15) {
+  if (!lastLossTime[name]) return false;
+  return Date.now() - lastLossTime[name] < cooldownMinutes * 60 * 1000;
+}
+function markLoss(name) { lastLossTime[name] = Date.now(); }
 
 // ─── BUG #10 FIX — NIFTY DIRECTION ───────────────────────────────────────────
 // Returns: 1 = Nifty bullish (above prev close), -1 = bearish, 0 = unknown
@@ -185,12 +198,12 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const risk = la.c - fL;
     const riskPct = (risk / la.c) * 100;
 
-    if (hasFVG && retrace && engulfing && riskPct >= 0.5) {
+    const atrPct = atrNormalizedRisk(tc); if (hasFVG && retrace && engulfing && riskPct >= 0.5 && atrPct < 2.8) {
       const rawScore = 3;
       const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
       return buildSignal({
         name, strategy: "FCB", direction: "BUY",
-        entry: r2(la.c * 1.002), target: r2(la.c * 1.002 + risk * 3), sl: r2(la.c * 1.002 - risk), risk,
+        entry: r2(Math.max(la.h, la.c) * 1.0015), target: r2(Math.max(la.h, la.c) * 1.0015 + risk * 3), sl: r2(la.c * 1.002 - risk), risk,
         rrLabel: "1:3", rrMult: 3, score,
         scoreBreakdown: { FCB: 3 },
         volRatio: vr, candles: tc,
@@ -217,7 +230,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
       const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
       return buildSignal({
         name, strategy: "FCB", direction: "SELL",
-        entry: r2(la.c * 0.998), target: r2(la.c * 0.998 - risk * 3), sl: r2(la.c * 0.998 + risk), risk,
+        entry: r2(Math.min(la.l, la.c) * 0.9985), target: r2(Math.min(la.l, la.c) * 0.9985 - risk * 3), sl: r2(la.c * 0.998 + risk), risk,
         rrLabel: "1:3", rrMult: 3, score,
         scoreBreakdown: { FCB: 3 },
         volRatio: vr, candles: tc,
@@ -267,7 +280,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
   const bbBonus = squeeze ? 2 : 0;
 
   // ── BUY SETUP ──
-  if (la.c > oH && p1.c <= oH) {
+  const atrPct = atrNormalizedRisk(tc); if (la.c > oH && p1.c <= oH && atrPct < 3.0) {
     const risk    = la.c - oM;
     const riskPct = (risk / la.c) * 100;
     if (riskPct < 0.25 || riskPct > 6) return null;
@@ -279,7 +292,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
     return buildSignal({
       name, strategy: "ORB", direction: "BUY",
-      entry: r2(la.c * 1.002), target: r2(la.c * 1.002 + risk * 2), sl: oM, risk,
+      entry: r2(Math.max(la.h, oH) * 1.0015), target: r2(Math.max(la.h, oH) * 1.0015 + risk * 2), sl: oM, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: breakdown,
       volRatio: vr, candles: tc,
@@ -289,7 +302,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL SETUP ──
-  if (la.c < oL && p1.c >= oL) {
+  if (la.c < oL && p1.c >= oL && atrPct < 3.0) {
     const risk    = oM - la.c;
     const riskPct = (risk / la.c) * 100;
     if (riskPct < 0.25 || riskPct > 6) return null;
@@ -301,7 +314,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
     return buildSignal({
       name, strategy: "ORB", direction: "SELL",
-      entry: r2(la.c * 0.998), target: r2(la.c * 0.998 - risk * 2), sl: oM, risk,
+      entry: r2(Math.min(la.l, oL) * 0.9985), target: r2(Math.min(la.l, oL) * 0.9985 - risk * 2), sl: oM, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: breakdown,
       volRatio: vr, candles: tc,
@@ -340,7 +353,7 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
   const atr = atrVals.length > 0 ? atrVals[atrVals.length - 1] : la.c * 0.005;
 
   // ── BUY: price crossed above VWAP ──
-  if (p1.c < vwapVal && la.c > vwapVal) {
+  if (p1.c < vwapVal && la.c > vwapVal && vwap(tc.slice(0, -1)) < vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 2;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
@@ -357,7 +370,7 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL: price crossed below VWAP ──
-  if (p1.c > vwapVal && la.c < vwapVal) {
+  if (p1.c > vwapVal && la.c < vwapVal && vwap(tc.slice(0, -1)) > vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 2;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
@@ -406,7 +419,9 @@ function emaAnalyze(candles, name, trades, niftyDir) {
   const vr = av > 0 ? la.v / av : 1;
 
   // ── BUY: EMA9 crosses above EMA21 + price above VWAP ──
-  if (e9p <= e21p && e9n > e21n && vwapVal && la.c > vwapVal) {
+  const { adx } = calcADX(tc, 14);
+  const adxNow = adx?.[adx.length - 1] || 0;
+  if (e9p <= e21p && e9n > e21n && vwapVal && la.c > vwapVal && adxNow > 20) {
     const risk = Math.max(la.c - e21n, la.c * 0.003);
     const riskPct = (risk / la.c) * 100;
     if (riskPct < 0.2 || riskPct > 5) return null;
@@ -426,7 +441,7 @@ function emaAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL: EMA9 crosses below EMA21 + price below VWAP ──
-  if (e9p >= e21p && e9n < e21n && vwapVal && la.c < vwapVal) {
+  if (e9p >= e21p && e9n < e21n && vwapVal && la.c < vwapVal && adxNow > 20) {
     const risk = Math.max(e21n - la.c, la.c * 0.003);
     const riskPct = (risk / la.c) * 100;
     if (riskPct < 0.2 || riskPct > 5) return null;
@@ -491,7 +506,7 @@ function gapAnalyze(candles, name, trades, niftyDir) {
   const vr = av > 0 ? la.v / av : 1;
 
   // ── GAP UP → SELL (fade the gap) ──
-  if (gapPct > 0) {
+  if (gapPct > 0 && tc[tc.length - 2].c < tc[tc.length - 2].o) {
     const tH  = Math.max(...tc.map(c => c.h));
     const sl  = r2(tH + la.c * 0.002);      // SL just above today's high
     const risk = sl - la.c;
@@ -512,7 +527,7 @@ function gapAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── GAP DOWN → BUY (fade the gap) ──
-  if (gapPct < 0) {
+  if (gapPct < 0 && tc[tc.length - 2].c > tc[tc.length - 2].o) {
     const tL  = Math.min(...tc.map(c => c.l));
     const sl  = r2(tL - la.c * 0.002);      // SL just below today's low
     const risk = la.c - sl;
@@ -723,14 +738,14 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
   const macdH = histogram.length > 0 ? histogram[histogram.length - 1] : 0;
 
   // ── BUY: price broke above upper band ──
-  if (la.c > bb.upper && p1.c < bb.upper && macdH > 0) {
+  const atrPct = atrNormalizedRisk(allC); if (la.c > bb.upper && p1.c < bb.upper && macdH > 0 && atrPct < 3.2) {
     const risk = la.c - bb.middle;
     if (risk <= 0) return null;
     const rawScore = 2;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
     return buildSignal({
       name, strategy: "BB_SQZ", direction: "BUY",
-      entry: la.c, target: la.c + risk * 2, sl: bb.middle, risk,
+      entry: r2(Math.max(la.h, bb.upper) * 1.0015), target: r2(Math.max(la.h, bb.upper) * 1.0015 + risk * 2), sl: bb.middle, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: { BB_SQZ: 2 },
       volRatio: vr, candles: tc,
@@ -740,14 +755,14 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL: price broke below lower band ──
-  if (la.c < bb.lower && p1.c > bb.lower && macdH < 0) {
+  if (la.c < bb.lower && p1.c > bb.lower && macdH < 0 && atrPct < 3.2) {
     const risk = bb.middle - la.c;
     if (risk <= 0) return null;
     const rawScore = 2;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
     return buildSignal({
       name, strategy: "BB_SQZ", direction: "SELL",
-      entry: la.c, target: la.c - risk * 2, sl: bb.middle, risk,
+      entry: r2(Math.min(la.l, bb.lower) * 0.9985), target: r2(Math.min(la.l, bb.lower) * 0.9985 - risk * 2), sl: bb.middle, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: { BB_SQZ: 2 },
       volRatio: vr, candles: tc,
@@ -1094,9 +1109,9 @@ function analyzeStock({
   if (!Array.isArray(activeStrategies) || activeStrategies.length === 0) return null;
 
   // BUG #1/#4: early exit if stock already has open position
-  if (hasOpenPosition(name, trades)) return null;
+  if (hasOpenPosition(name, trades) || inCooldown(name)) return null;
 
-  const niftyDir = getNiftyDirection(niftyLtp, niftyPrevClose);
+  const niftyDir = getNiftyDirection
 
   // Run each active strategy
   const rawSignals = [];
@@ -1150,8 +1165,9 @@ module.exports = {
 
   // Utilities — bot.js uses these
   hasOpenPosition,
+  markLoss,
   getNiftyDirection,
-
+  
   // Exposed for testing
   ANALYZERS,
   scoreSignal,
