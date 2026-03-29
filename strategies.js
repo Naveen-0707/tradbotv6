@@ -179,7 +179,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const retrace = hasFVG && la.l <= fvgHigh && la.c > fvgLow;
 
     // Engulfing: last candle body engulfs prior candle body
-    const engulfing = la.c > p1.h && la.o < p1.l;
+    const engulfing = la.c > p1.h && la.o <= p1.c;
 
     // Risk must be meaningful (≥ 0.5% of price)
     const risk = la.c - fL;
@@ -190,7 +190,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
       const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
       return buildSignal({
         name, strategy: "FCB", direction: "BUY",
-        entry: la.c, target: la.c + risk * 3, sl: la.c - risk, risk,
+        entry: r2(la.c * 1.002), target: r2(la.c * 1.002 + risk * 3), sl: r2(la.c * 1.002 - risk), risk,
         rrLabel: "1:3", rrMult: 3, score,
         scoreBreakdown: { FCB: 3 },
         volRatio: vr, candles: tc,
@@ -207,7 +207,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const hasFVG  = fvgLow !== null && fvgLow < fvgHigh;
 
     const retrace   = hasFVG && la.h >= fvgLow && la.c < fvgHigh;
-    const engulfing = la.c < p1.l && la.o > p1.h;
+    const engulfing = la.c < p1.l && la.o >= p1.c;
 
     const risk    = fH - la.c;
     const riskPct = (risk / la.c) * 100;
@@ -217,7 +217,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
       const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
       return buildSignal({
         name, strategy: "FCB", direction: "SELL",
-        entry: la.c, target: la.c - risk * 3, sl: la.c + risk, risk,
+        entry: r2(la.c * 0.998), target: r2(la.c * 0.998 - risk * 3), sl: r2(la.c * 0.998 + risk), risk,
         rrLabel: "1:3", rrMult: 3, score,
         scoreBreakdown: { FCB: 3 },
         volRatio: vr, candles: tc,
@@ -279,7 +279,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
     return buildSignal({
       name, strategy: "ORB", direction: "BUY",
-      entry: la.c, target: la.c + risk * 2, sl: oM, risk,
+      entry: r2(la.c * 1.002), target: r2(la.c * 1.002 + risk * 2), sl: oM, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: breakdown,
       volRatio: vr, candles: tc,
@@ -301,7 +301,7 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
     return buildSignal({
       name, strategy: "ORB", direction: "SELL",
-      entry: la.c, target: la.c - risk * 2, sl: oM, risk,
+      entry: r2(la.c * 0.998), target: r2(la.c * 0.998 - risk * 2), sl: oM, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: breakdown,
       volRatio: vr, candles: tc,
@@ -570,12 +570,12 @@ function stMacdAnalyze(candles, name, trades, niftyDir) {
 
   // Both SuperTrend and MACD must agree on direction
   if (macdCross === "BUY" && stD === 1) {
-    const risk = la.c * 0.005;
+    const risk = Math.max(la.c - stV, la.c * 0.003);
     const rawScore = 3;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
     return buildSignal({
       name, strategy: "ST_MACD", direction: "BUY",
-      entry: la.c, target: la.c + risk * 2, sl: la.c - risk, risk,
+      entry: la.c, target: la.c + risk * 2, sl: stV, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: { ST_MACD: 3 },
       volRatio: vr, candles: tc,
@@ -586,12 +586,12 @@ function stMacdAnalyze(candles, name, trades, niftyDir) {
   }
 
   if (macdCross === "SELL" && stD === -1) {
-    const risk = la.c * 0.005;
+    const risk = Math.max(stV - la.c, la.c * 0.003);
     const rawScore = 3;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
     return buildSignal({
       name, strategy: "ST_MACD", direction: "SELL",
-      entry: la.c, target: la.c - risk * 2, sl: la.c + risk, risk,
+      entry: la.c, target: la.c - risk * 2, sl: stV, risk,
       rrLabel: "1:2", rrMult: 2, score,
       scoreBreakdown: { ST_MACD: 3 },
       volRatio: vr, candles: tc,
