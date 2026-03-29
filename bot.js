@@ -666,6 +666,47 @@ let lastScanMin   = -999; // single tracker sufficient for schedule-driven scans
 async function loop() {
   if (botStopped) return;
 
+  // D2 FIX: auto-square-off all open positions at 3:20 PM
+  if (minOfDay() === 920) {
+    const openTrades = trades.filter(t =>
+      (t.status === "OPEN" || t.status === "PAPER") &&
+      t.date === todayStr()
+    );
+    if (openTrades.length > 0) {
+      log(`⏰ 3:20 PM — auto-squaring ${openTrades.length} open position(s)`, "WARN");
+      notify("⏰ Auto Square-Off", `Closing ${openTrades.length} open position(s)`);
+      for (const trade of openTrades) {
+        if (trade.paper) {
+          trade.status = "SQUARED_OFF";
+          trade.pnl    = trade.livePnl || 0;
+          log(`📋 Paper squared: ${trade.name} P&L ₹${trade.pnl}`, "TRADE");
+        } else {
+          const exitTx = trade.direction === "BUY" ? "SELL" : "BUY";
+          const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+          const stock = allStockList.find(s => s.name === trade.name);
+          if (stock) {
+            try {
+              await placeOrd({
+                quantity: trade.qty, product: "I", validity: "DAY", price: 0,
+                tag: "FCB_SQUAREOFF", instrument_token: stock.key,
+                order_type: "MARKET", transaction_type: exitTx,
+                disclosed_quantity: 0, trigger_price: 0, is_amo: false, slice: false,
+              });
+              trade.status = "SQUARED_OFF";
+              log(`✅ Live squared: ${trade.name}`, "TRADE");
+              if (trade.targetOrderId) try { await cancelOrder(trade.targetOrderId); } catch {}
+              if (trade.slOrderId)     try { await cancelOrder(trade.slOrderId);     } catch {}
+            } catch (e) {
+              log(`❌ Square-off failed ${trade.name}: ${e.message}`, "ERROR");
+              notify("❌ Square-Off Failed", `${trade.name}: ${e.message.slice(0, 80)}`);
+            }
+          }
+        }
+      }
+      saveTrades();
+    }
+  }
+
   const m     = minOfDay();
   const sched = getSchedule(m); // from strategies.js
 
