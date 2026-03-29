@@ -336,9 +336,12 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
 
   if (vr < 1.5) return null;
 
+  const atrVals = calcATR(tc, 14);
+  const atr = atrVals.length > 0 ? atrVals[atrVals.length - 1] : la.c * 0.005;
+
   // ── BUY: price crossed above VWAP ──
   if (p1.c < vwapVal && la.c > vwapVal) {
-    const risk = la.c * 0.005;
+    const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 2;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
     return buildSignal({
@@ -355,7 +358,7 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
 
   // ── SELL: price crossed below VWAP ──
   if (p1.c > vwapVal && la.c < vwapVal) {
-    const risk = la.c * 0.005;
+    const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 2;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
     return buildSignal({
@@ -641,7 +644,9 @@ function rsiDivAnalyze(candles, name, trades, niftyDir) {
 
   // BUY: bullish divergence + ST bullish + RSI in 30–50 zone
   if (divergence === "bullish" && stD === 1 && rsiNow >= 30 && rsiNow <= 50) {
-    const risk = la.c * 0.006;
+    const atrVals = calcATR(allC, 14);
+    const atr = atrVals.length > 0 ? atrVals[atrVals.length - 1] : la.c * 0.006;
+    const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 3;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
     return buildSignal({
@@ -658,7 +663,9 @@ function rsiDivAnalyze(candles, name, trades, niftyDir) {
 
   // SELL: bearish divergence + ST bearish + RSI in 50–70 zone
   if (divergence === "bearish" && stD === -1 && rsiNow >= 50 && rsiNow <= 70) {
-    const risk = la.c * 0.006;
+    const atrVals = calcATR(allC, 14);
+    const atr = atrVals.length > 0 ? atrVals[atrVals.length - 1] : la.c * 0.006;
+    const risk = Math.max(atr * 1.5, la.c * 0.003);
     const rawScore = 3;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
     return buildSignal({
@@ -716,7 +723,7 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
   const macdH = histogram.length > 0 ? histogram[histogram.length - 1] : 0;
 
   // ── BUY: price broke above upper band ──
-  if (la.c > bb.upper && p1.c <= bb.upper && macdH > 0) {
+  if (la.c > bb.upper && p1.c < bb.upper && macdH > 0) {
     const risk = la.c - bb.middle;
     if (risk <= 0) return null;
     const rawScore = 2;
@@ -733,7 +740,7 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL: price broke below lower band ──
-  if (la.c < bb.lower && p1.c >= bb.lower && macdH < 0) {
+  if (la.c < bb.lower && p1.c > bb.lower && macdH < 0) {
     const risk = bb.middle - la.c;
     if (risk <= 0) return null;
     const rawScore = 2;
@@ -779,8 +786,9 @@ function adxEmaAnalyze(candles, name, trades, niftyDir) {
   const pDIPrev  = plusDI[plusDI.length - 2];
   const mDIPrev  = minusDI[minusDI.length - 2];
 
-  // ADX must show strong trend
-  if (adxNow < 25) return null;
+  // ADX must show strong and strengthening trend
+  const adxPrev = adx[adx.length - 2];
+  if (adxNow < 25 || adxNow <= adxPrev) return null;
 
   const closes = allC.map(c => c.c);
   const e9  = ema(closes, 9);
