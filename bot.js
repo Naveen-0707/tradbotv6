@@ -642,7 +642,7 @@ async function scan(strategyNames) {
           return [];
         }
       })
-    ));
+    );
     allResults.push(...batchResults);
     if (i + BATCH_SIZE < stocks.length) await sleep(BATCH_DELAY);
   }
