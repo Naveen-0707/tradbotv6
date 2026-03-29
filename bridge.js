@@ -366,7 +366,7 @@ const server = http.createServer((req, res) => {
         if (req.method === "POST" && urlPath === "/api/cmd") {
           const { cmd, strats } = parsed;
           // BUG #8 FIX: "clear_trades" now in allowed list
-          const allowed = ["stop", "resume", "scan", "reload_token", "reload_settings", "clear_trades"];
+          const allowed = ["stop", "resume", "scan", "reload_token", "reload_settings", "clear_trades", "manual_paper"];
           if (!allowed.includes(cmd))
             return json(res, { ok: false, error: `Unknown command '${cmd}'` }, 400);
 
