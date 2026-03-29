@@ -195,8 +195,9 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const engulfing = la.c > p1.h && la.o <= p1.c;
 
     // Risk must be meaningful (≥ 0.5% of price)
-    const risk = la.c - fL;
-    const riskPct = (risk / la.c) * 100;
+    const fcbEntry = r2(Math.max(la.h, la.c) * 1.0015);
+    const risk = fcbEntry - fL;
+    const riskPct = (risk / fcbEntry) * 100;
 
     const atrPct = atrNormalizedRisk(tc); if (hasFVG && retrace && engulfing && riskPct >= 0.5 && atrPct < 2.8) {
       const rawScore = 3;
@@ -222,9 +223,9 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const retrace   = hasFVG && la.h >= fvgLow && la.c < fvgHigh;
     const engulfing = la.c < p1.l && la.o >= p1.c;
 
-    const risk    = fH - la.c;
-    const riskPct = (risk / la.c) * 100;
-
+    const fcbEntry = r2(Math.min(la.l, la.c) * 0.9985);
+    const risk    = fH - fcbEntry;
+    const riskPct = (risk / fcbEntry) * 100;
     if (hasFVG && retrace && engulfing && riskPct >= 0.5) {
       const rawScore = 3;
       const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
@@ -281,8 +282,9 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
   // ── BUY SETUP ──
   const atrPct = atrNormalizedRisk(tc); if (la.c > oH && p1.c <= oH && atrPct < 3.0) {
-    const risk    = la.c - oM;
-    const riskPct = (risk / la.c) * 100;
+    const orbBuyEntry = r2(Math.max(la.h, oH) * 1.0015);
+    const risk    = orbBuyEntry - oM;
+    const riskPct = (risk / orbBuyEntry) * 100;
     if (riskPct < 0.25 || riskPct > 6) return null;
 
     const rawScore = 2 + bbBonus;
@@ -303,8 +305,9 @@ function orbAnalyze(candles, name, trades, niftyDir) {
 
   // ── SELL SETUP ──
   if (la.c < oL && p1.c >= oL && atrPct < 3.0) {
-    const risk    = oM - la.c;
-    const riskPct = (risk / la.c) * 100;
+    const orbSellEntry = r2(Math.min(la.l, oL) * 0.9985);
+    const risk    = oM - orbSellEntry;
+    const riskPct = (risk / orbSellEntry) * 100;
     if (riskPct < 0.25 || riskPct > 6) return null;
 
     const rawScore = 2 + bbBonus;
@@ -739,7 +742,8 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
 
   // ── BUY: price broke above upper band ──
   const atrPct = atrNormalizedRisk(allC); if (la.c > bb.upper && p1.c < bb.upper && macdH > 0 && atrPct < 3.2) {
-    const risk = la.c - bb.middle;
+    const bbBuyEntry = r2(Math.max(la.h, bb.upper) * 1.0015);
+    const risk = bbBuyEntry - bb.middle;
     if (risk <= 0) return null;
     const rawScore = 2;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
@@ -756,7 +760,8 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
 
   // ── SELL: price broke below lower band ──
   if (la.c < bb.lower && p1.c > bb.lower && macdH < 0 && atrPct < 3.2) {
-    const risk = bb.middle - la.c;
+    const bbSellEntry = r2(Math.min(la.l, bb.lower) * 0.9985);
+    const risk = bb.middle - bbSellEntry;
     if (risk <= 0) return null;
     const rawScore = 2;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
