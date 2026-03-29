@@ -841,8 +841,54 @@ async function start() {
   }
 
   // Ensure cmd file exists
+  // Ensure cmd file exists
   if (!fs.existsSync(CMD_FILE)) {
     fs.writeFileSync(CMD_FILE, JSON.stringify({ cmd: "noop", ts: 0 }));
+  }
+
+  // BUG-007 FIX: post-crash order audit — reconcile open trades against broker
+  const orphanedTrades = trades.filter(t =>
+    t.status === "OPEN" && !t.paper && t.date === todayStr() &&
+    (!t.slOrderId || !t.targetOrderId)
+  );
+  if (orphanedTrades.length > 0) {
+    log(`⚠️ ${orphanedTrades.length} orphaned trade(s) detected — auditing broker orders`, "WARN");
+    notify("⚠️ Orphaned Trades", `${orphanedTrades.length} trade(s) missing OCO legs — check manually`);
+    for (const trade of orphanedTrades) {
+      log(`⚠️ Orphaned: ${trade.name} ${trade.direction} qty:${trade.qty} entry:₹${trade.entry} — no SL/Target order ID`, "WARN");
+    }
+  }
+
+  // Audit all open live trades — check if OCO orders still active on broker
+  const openLive = trades.filter(t => t.status === "OPEN" && !t.paper && t.date === todayStr());
+  if (openLive.length > 0) {
+    log(`🔍 Auditing ${openLive.length} open live trade(s) on restart...`, "INFO");
+    for (const trade of openLive) {
+      try {
+        if (trade.slOrderId) {
+          const s = await getOrderStatus(trade.slOrderId);
+          if (s?.status === "complete") {
+            const pnl = -(trade.risk * trade.qty);
+            trade.status = "STOPPED_OUT";
+            trade.pnl    = pnl;
+            log(`🔍 Audit: ${trade.name} SL already hit — marking STOPPED_OUT`, "WARN");
+          }
+        }
+        if (trade.targetOrderId && trade.status === "OPEN") {
+          const s = await getOrderStatus(trade.targetOrderId);
+          if (s?.status === "complete") {
+            const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2));
+            trade.status = "TARGET_HIT";
+            trade.pnl    = pnl;
+            log(`🔍 Audit: ${trade.name} Target already hit — marking TARGET_HIT`, "INFO");
+          }
+        }
+      } catch (e) {
+        log(`⚠️ Audit failed for ${trade.name}: ${e.message}`, "WARN");
+      }
+    }
+    saveTrades();
+    log(`✅ Order audit complete`, "INFO");
   }
 
   watchCMD();
