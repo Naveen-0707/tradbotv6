@@ -34,6 +34,7 @@ const {
   getSchedule,
   getStocksForTier,
   hasOpenPosition,
+  markLoss,
   STOCKS,
 } = require("./strategies");
 
@@ -403,6 +404,7 @@ async function simulatePaperOCO() {
       const pnl = -((trade.risk * trade.qty) + charges);
       trade.status = "STOPPED_OUT";
       trade.pnl    = pnl;
+      markLoss(trade.name);
       log(`🛑 PAPER SL: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)} (incl ₹${charges} charges)`, "WARN");
       notify(`🛑 Paper SL — ${trade.name}`, `-₹${Math.abs(pnl).toFixed(0)} net`);
     }
@@ -437,6 +439,7 @@ async function checkLiveOCO() {
           const pnl = -(trade.risk * trade.qty);
           trade.status = "STOPPED_OUT";
           trade.pnl    = pnl;
+          markLoss(trade.name);
           saveTrades();
           log(`🛑 STOPPED: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)}`, "WARN");
           notify("🛑 STOPPED", `${trade.name} -₹${Math.abs(pnl).toFixed(0)}`);
@@ -888,6 +891,7 @@ async function start() {
             const pnl = -(trade.risk * trade.qty);
             trade.status = "STOPPED_OUT";
             trade.pnl    = pnl;
+            markLoss(trade.name);
             log(`🔍 Audit: ${trade.name} SL already hit — marking STOPPED_OUT`, "WARN");
           }
         }
