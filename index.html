@@ -775,7 +775,7 @@ function FCBBotV6(){
             {/* Nifty direction */}
             {niftyLtp&&(
               <div style={{fontSize:9,color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#4a7a9a",fontFamily:"'Share Tech Mono',monospace",marginBottom:2}}>
-                {niftyDir>0?"🟢":"niftyDir<0"?"🔴":"⚪"} NIFTY {niftyLtp?.toLocaleString("en-IN")} {niftyChg!=null?`(${niftyChg>0?"+":""}${niftyChg}%)`:""} 
+                {niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} NIFTY {niftyLtp?.toLocaleString("en-IN")} {niftyChg!=null?`(${niftyChg>0?"+":""}${niftyChg}%)`:""} 
               </div>
             )}
             <div style={{display:"flex",gap:4,justifyContent:"flex-end",marginBottom:2}}>
