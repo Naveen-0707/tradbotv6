@@ -507,7 +507,31 @@ async function execTrade(signal) {
     log(`🔄 LIVE: ${signal.direction} ${qty}× ${signal.name} [${signal.strategy}] score:${signal.score}/10 @ ₹${signal.entry}`, "TRADE");
 
     const entryOrderId  = await placeEntry(stock.key, signal.direction, qty, signal.entry);
-    log(`✅ Entry #${entryOrderId}`, "TRADE");
+    log(`✅ Entry #${entryOrderId} — waiting for fill...`, "TRADE");
+
+    // D1 FIX: wait for entry fill before placing OCO — 60s timeout
+    let filled = false;
+    for (let i = 0; i < 12; i++) {
+      await sleep(5000);
+      try {
+        const s = await getOrderStatus(entryOrderId);
+        if (s?.status === "complete") { filled = true; break; }
+        if (s?.status === "cancelled" || s?.status === "rejected") {
+          log(`⛔ Entry ${s.status} — OCO skipped for ${signal.name}`, "WARN");
+          notify("⛔ Entry Not Filled", `${signal.name} order ${s.status}`);
+          return;
+        }
+      } catch { /* keep polling */ }
+    }
+
+    if (!filled) {
+      log(`⏱ Entry timeout — cancelling & skipping OCO for ${signal.name}`, "WARN");
+      notify("⏱ Entry Timeout", `${signal.name} — OCO not placed`);
+      try { await cancelOrder(entryOrderId); } catch {}
+      return;
+    }
+
+    log(`✅ Entry filled #${entryOrderId} — placing OCO`, "TRADE");
 
     const targetOrderId = await placeTarget(stock.key, exitTx, qty, signal.target);
     log(`✅ Target #${targetOrderId}`, "TRADE");
