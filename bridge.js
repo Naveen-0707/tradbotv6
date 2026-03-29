@@ -524,7 +524,15 @@ const server = http.createServer((req, res) => {
             "Content-Disposition": `attachment; filename="${filename}"`,
             "Cache-Control":       "no-cache",
           });
-          res.end(content);
+          if (fmt === "txt") {
+            const header = `FCB BOT V6 LOG — ${dateLabel}\n${"─".repeat(50)}\n`;
+            res.write(header);
+            const stream = fs.createReadStream(filePath, { encoding: "utf8" });
+            stream.pipe(res);
+            stream.on("error", () => res.end());
+          } else {
+            res.end(content);
+          }
           return;
         }
 
