@@ -128,12 +128,23 @@ function readLinesSince(filePath, sinceTs) {
   try {
     const lines = readLastLines(filePath, 0); // all lines
     if (!sinceTs) return lines;
-    // Find the index of the first line AT or AFTER sinceTs
-    // Log line format: [HH:MM:SS am/pm] [TYPE] message
+
+    // Convert "10:37:42 am" / "3:45:01 pm" → seconds since midnight for numeric compare
+    const toSecs = str => {
+      const m = str.match(/(\d+):(\d+):(\d+)\s*(am|pm)/i);
+      if (!m) return 0;
+      let h = parseInt(m[1]), min = parseInt(m[2]), s = parseInt(m[3]);
+      const pm = m[4].toLowerCase() === "pm";
+      if (pm && h !== 12) h += 12;
+      if (!pm && h === 12) h = 0;
+      return h * 3600 + min * 60 + s;
+    };
+
+    const sinceSecs = toSecs(sinceTs);
     const idx = lines.findIndex(l => {
       const m = l.match(/^\[(.+?)\]/);
       if (!m) return false;
-      return m[1] >= sinceTs;
+      return toSecs(m[1]) >= sinceSecs;
     });
     return idx >= 0 ? lines.slice(idx) : [];
   } catch { return []; }
