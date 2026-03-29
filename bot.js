@@ -295,6 +295,13 @@ function dailyLivePnL() {
   return trades.filter(t => t.date === todayStr() && !t.paper).reduce((s, t) => s + (t.pnl || 0), 0);
 }
 
+function dailyTotalPnL() {
+  return trades.filter(t => t.date === todayStr()).reduce((s, t) => {
+    if (t.pnl !== null) return s + t.pnl;
+    return s + (t.livePnl || 0);
+  }, 0);
+}
+
 // BUG #5 FIX: SELL trades (shorts) don't require capital — exclude from locked
 function lockedCapital() {
   return trades
@@ -332,7 +339,7 @@ async function refreshNiftyState() {
 
     // Load Nifty prevClose once per session (yesterday's close)
     if (!niftyState.prevClose) {
-      const cs = await fetchCandles(STOCKS.nifty.key, 20);
+      const cs = await fetchCandles(STOCKS.nifty.key, 100);
       const toIST = ts => new Date(new Date(ts).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
       const todayDateStr = istNow().toDateString();
       const yc = cs.filter(c => toIST(c.ts).toDateString() !== todayDateStr);
@@ -445,7 +452,7 @@ async function checkLiveOCO() {
 // ─── EXECUTE TRADE ────────────────────────────────────────────────────────────
 async function execTrade(signal) {
   // Gate 1: daily loss
-  if (dailyPnL() <= -MLOSS()) {
+  if (dailyTotalPnL() <= -MLOSS()) {
     log(`🛑 Daily loss limit ₹${MLOSS()} — skip ${signal.name}`, "WARN");
     return;
   }
@@ -587,9 +594,14 @@ async function scan(strategyNames) {
       "INFO"
     );
 
-    // Parallel fetch + analyze all stocks
-    const results = await Promise.allSettled(
-      stocks.map(async stock => {
+    // Batched fetch + analyze — 20 stocks at a time, 10s gap between batches
+    const BATCH_SIZE = 20;
+    const BATCH_DELAY = 10000;
+    const allResults = [];
+    for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
+      const batch = stocks.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(async stock => {
         try {
           const candles = await fetchCandles(stock.key, candleCount);
 
@@ -627,11 +639,14 @@ async function scan(strategyNames) {
           return [];
         }
       })
-    );
+    ));
+    allResults.push(...batchResults);
+    if (i + BATCH_SIZE < stocks.length) await sleep(BATCH_DELAY);
+  }
 
-    const signals = results
-      .filter(r => r.status === "fulfilled")
-      .flatMap(r => r.value);
+  const signals = allResults
+    .filter(r => r.status === "fulfilled")
+    .flatMap(r => r.value);
 
     // Persist signals for UI
     try { fs.writeFileSync(SIG_FILE, JSON.stringify(signals, null, 2)); } catch { /* ignore */ }
@@ -727,7 +742,7 @@ async function loop() {
       ` | Avail:₹${availableBalance().toFixed(0)}`,
       "STATUS"
     );
-    notifyPersistent(`${sched.label} | ₹${pnl.toFixed(0)} | ${PAPER() ? "PAPER" : "LIVE"}`);
+    if (m >= 525 && m <= 960) notifyPersistent(`${sched.label} | ₹${pnl.toFixed(0)} | ${PAPER() ? "PAPER" : "LIVE"}`);
   }
 
   // Log strategy window transitions
