@@ -311,9 +311,11 @@ function availableBalance() {
 function calcQty(risk, entry) {
   const avail = availableBalance();
   if (avail <= 0 || entry <= 0 || risk <= 0) return 0;
+  if (entry > avail) return 0;
   const maxByRisk    = Math.floor((avail * RPCT() / 100) / risk);
   const maxByCapital = Math.floor(avail / entry);
-  return Math.max(1, Math.min(maxByRisk, maxByCapital));
+  const MAX_QTY      = 500; // safety cap — prevents runaway qty on tiny risk values
+  return Math.min(Math.max(1, Math.min(maxByRisk, maxByCapital)), MAX_QTY);
 }
 
 // ─── NIFTY STATE — BUG #10 FIX ───────────────────────────────────────────────
