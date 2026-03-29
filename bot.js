@@ -224,7 +224,7 @@ async function fetchLTP(keys) {
   // Upstox allows comma-separated keys in query param
   const param = keys.map(k => encodeURIComponent(k)).join("%2C");
   try {
-    const r = await fetchR(API_HOST, `/v2/market-quote/ltp?instrument_key=${param}`, "GET", authH());
+    const r = await fetchR(API_HOST, `/v3/market-quote/quotes?instrument_key=${param}`, "GET", authH());
     if (r.status === 200 && r.data?.data) return r.data.data;
   } catch (e) {
     log(`⚠️ LTP fetch failed: ${e.message}`, "WARN");
