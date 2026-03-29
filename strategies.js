@@ -85,14 +85,7 @@ function getNiftyDirection(niftyLtp, niftyPrevClose) {
 // Returns final adjusted score (clamped to 0 minimum).
 
 function applyBonuses(rawScore, direction, volRatio, niftyDir) {
-  let score = rawScore;
-  if (volRatio >= 2.0) score += 1;         // high volume bonus
-  if (niftyDir !== 0) {
-    const aligned = direction === "BUY" ? niftyDir === 1 : niftyDir === -1;
-    if (aligned) score += 1;               // Nifty bonus
-    else score -= 2;                       // Nifty penalty — strong deterrent
-  }
-  return Math.max(0, score);
+  return rawScore; // bonuses applied once in analyzeStock after merging
 }
 
 // ─── SIGNAL BUILDER ───────────────────────────────────────────────────────────
@@ -1117,9 +1110,18 @@ function analyzeStock({
   const scored = scoreSignal(rawSignals);
   if (!scored) return null;
 
+  // Apply volume + Nifty bonuses ONCE after merge — prevents double-counting
+  let finalScore = scored.score;
+  if (scored.volRatio >= 2.0) finalScore += 1;
+  if (niftyDir !== 0) {
+    const aligned = scored.direction === "BUY" ? niftyDir === 1 : niftyDir === -1;
+    if (aligned) finalScore += 1;
+    else finalScore -= 2;
+  }
+  scored.score = Math.min(10, Math.max(0, finalScore));
+
   // Apply score threshold (BUG #9 prevention: weak early signals filtered here)
   if (scored.score < scoreThreshold) return null;
-
   return scored;
 }
 
