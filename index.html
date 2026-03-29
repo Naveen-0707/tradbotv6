@@ -662,8 +662,8 @@ function FCBBotV6(){
         setTrades(p=>[t,...p]);
         addAlert(`📝 Paper: ${signal.direction} ${qty}× ${signal.name}`,"success");
         window.FCBNotify?.send(`📝 Paper — ${signal.name}`,`${signal.direction} ${qty}× @ ₹${signal.entry} S:${signal.score}`);
-        // Also sync to bot via cmd so bot's in-memory state matches
-        // Bot handles paper trades internally, but UI can also track them
+        // Sync to bot so hasOpenPosition() fires correctly for UI-placed trades
+        try{ await api.post("/api/cmd",{cmd:"manual_paper",trade:t}); }catch{}
       }else{
         // Find instrument key from STRAT_CFG — we need it for live orders
         // Fetch from config endpoint to get the stock list
