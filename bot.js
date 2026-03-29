@@ -718,6 +718,16 @@ function watchCMD() {
           if (s.length > 0) scan(s);
           break;
         }
+        case "manual_paper":
+          if (cmd.trade) {
+            const t = cmd.trade;
+            if (!hasOpenPosition(t.name, trades)) {
+              trades.push({ ...t, paper: true, status: "PAPER" });
+              saveTrades();
+              log(`📝 UI Paper synced: ${t.direction} ${t.qty}× ${t.name}`, "TRADE");
+            }
+          }
+          break; 
 
         // BUG #8 FIX: atomically clears in-memory trades AND disk file
         case "clear_trades":
