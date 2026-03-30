@@ -1116,7 +1116,7 @@ function analyzeStock({
   // BUG #1/#4: early exit if stock already has open position
   if (hasOpenPosition(name, trades) || inCooldown(name)) return null;
 
-  const niftyDir = getNiftyDirection
+  const niftyDir = getNiftyDirection(niftyLtp, niftyPrevClose);
 
   // Run each active strategy
   const rawSignals = [];
