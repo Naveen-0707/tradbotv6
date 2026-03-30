@@ -738,7 +738,7 @@ async function scan(strategyNames) {
           if (openMin >= 560 && openMin <= 562) {
             const todayCs = candles.filter(c => {
               const t = new Date(new Date(c.ts).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-              return t.toDateString() === new Date(Date.now() + 5.5 * 3600000).toDateString();
+              return t.toDateString() === istNow().toDateString();
             });
             if (todayCs.length >= 2) {
               const rngHigh = Math.max(...todayCs.map(c => c.h));
