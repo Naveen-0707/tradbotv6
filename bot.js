@@ -400,13 +400,24 @@ async function refreshNiftyState() {
 
     niftyState.ltp = ltp;
 
-    // Load Nifty prevClose once per session (yesterday's close)
+    // Load Nifty prevClose once per session via dedicated index OHLC endpoint
     if (!niftyState.prevClose) {
-      const cs = await fetchCandles(STOCKS.nifty.key, 100);
-      const toIST = ts => new Date(new Date(ts).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-      const todayDateStr = istNow().toDateString();
-      const yc = cs.filter(c => toIST(c.ts).toDateString() !== todayDateStr);
-      if (yc.length > 0) niftyState.prevClose = yc[yc.length - 1].c;
+      try {
+        const toD = new Date(istNow()); toD.setDate(toD.getDate() - 1);
+        const frD = new Date(istNow()); frD.setDate(frD.getDate() - 3);
+        const r = await fetchR(
+          API_HOST,
+          `/v3/historical-candle/${encodeURIComponent(STOCKS.nifty.key)}/days/1/${istDateStr(toD)}/${istDateStr(frD)}`,
+          "GET", authH()
+        );
+        if (r.status === 200 && r.data?.data?.candles?.length > 0) {
+          const last = r.data.data.candles[0]; // newest-first, index 0 = yesterday
+          niftyState.prevClose = last[4]; // close is index 4: [ts,o,h,l,c,v]
+          log(`📊 Nifty prevClose: ₹${niftyState.prevClose}`, "INFO");
+        }
+      } catch (e) {
+        log(`⚠️ Nifty prevClose fetch failed: ${e.message}`, "WARN");
+      }
     }
 
     // Direction: >0.1% change = meaningful
@@ -465,7 +476,7 @@ async function simulatePaperOCO() {
         const stock = allStockList.find(x => x.name === trade.name);
         if (stock) {
           try {
-            const ltpData = await fetchLTP([stock.key]);
+            const ltpData = await fetchEquityLTP([stock.key]);
             const quote   = ltpData?.[stock.key];
             // Use last_price as proxy — full VWAP needs candles, this is a safety check
             const aboveEntry = trade.direction === "BUY"
