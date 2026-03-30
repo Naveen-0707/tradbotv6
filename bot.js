@@ -301,9 +301,15 @@ const getOrderStatus = (id) =>
   fetchR(API_HOST, `/v2/order/details?order_id=${id}`, "GET", authH())
     .then(r => r.data?.data);
 
-const cancelOrder = (id) =>
+cconst cancelOrder = (id) =>
   fetchR(HFT_HOST, `/v3/order/cancel?order_id=${id}`, "DELETE", authH())
     .then(r => r.data);
+
+const modifyOrder = (id, triggerPrice) =>
+  fetchR(HFT_HOST, `/v3/order/modify`, "PUT",
+    { ...authH(), "Content-Type": "application/json" },
+    { order_id: id, trigger_price: triggerPrice, price: 0, order_type: "SL-M", validity: "DAY", quantity: undefined }
+  ).then(r => r.data);
 
 // ─── TRADE STATE ──────────────────────────────────────────────────────────────
 let trades = [];
@@ -523,6 +529,38 @@ async function checkLiveOCO() {
 
   for (const trade of open) {
     try {
+      // ── LIVE TRAILING STOP — move SL to entry once profit >= 1R ──
+      if (!trade.trailed && trade.slOrderId) {
+        const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+        const stock = allStockList.find(s => s.name === trade.name);
+        if (stock) {
+          const ltpData = await fetchEquityLTP([stock.key]);
+          const ltp = ltpData?.[stock.key]?.last_price;
+          if (ltp) {
+            const unrealised = trade.direction === "BUY"
+              ? (ltp - trade.entry) * trade.qty
+              : (trade.entry - ltp) * trade.qty;
+            const oneR = trade.risk * trade.qty;
+            const slAlreadyAtEntry = trade.direction === "BUY"
+              ? trade.sl >= trade.entry
+              : trade.sl <= trade.entry;
+
+            if (unrealised >= oneR && !slAlreadyAtEntry) {
+              try {
+                await modifyOrder(trade.slOrderId, trade.entry);
+                trade.sl      = trade.entry;
+                trade.trailed = true;
+                saveTrades();
+                log(`🔒 LIVE Trail: ${trade.name} SL moved to entry ₹${trade.entry} (profit ≥ 1R, ₹${unrealised.toFixed(0)})`, "TRADE");
+                notify(`🔒 Trail — ${trade.name}`, `SL moved to breakeven ₹${trade.entry}`);
+              } catch (e) {
+                log(`⚠️ Trail modify failed ${trade.name}: ${e.message} — SL unchanged`, "WARN");
+              }
+            }
+          }
+        }
+      }
+
       if (trade.targetOrderId) {
         const s = await getOrderStatus(trade.targetOrderId);
         if (s?.status === "complete") {
