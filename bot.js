@@ -422,13 +422,14 @@ async function checkLiveOCO() {
       if (trade.targetOrderId) {
         const s = await getOrderStatus(trade.targetOrderId);
         if (s?.status === "complete") {
-          const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2));
+          const charges = COSTS() * 2;
+          const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2) - charges);
           trade.status = "TARGET_HIT";
           trade.pnl    = pnl;
           saveTrades();
-          log(`🎯 TARGET HIT: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)}`, "TRADE");
-          notify("🎯 TARGET HIT!", `${trade.name} +₹${pnl.toFixed(0)}`);
-          if (trade.slOrderId) try { await cancelOrder(trade.slOrderId); } catch { /* ignore */ }
+          log(`🎯 TARGET HIT: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)} (after ₹${charges} charges)`, "TRADE");
+          notify("🎯 TARGET HIT!", `${trade.name} +₹${pnl.toFixed(0)} net`);
+          if (trade.slOrderId) try { await cancelOrder(trade.slOrderId); } catch (e) { log(`⚠️ Cancel SL failed ${trade.name}: ${e.message}`, "WARN"); }
           continue;
         }
       }
@@ -436,14 +437,15 @@ async function checkLiveOCO() {
       if (trade.slOrderId) {
         const s = await getOrderStatus(trade.slOrderId);
         if (s?.status === "complete") {
-          const pnl = -(trade.risk * trade.qty);
+          const charges = COSTS() * 2;
+          const pnl = -((trade.risk * trade.qty) + charges);
           trade.status = "STOPPED_OUT";
           trade.pnl    = pnl;
           markLoss(trade.name);
           saveTrades();
-          log(`🛑 STOPPED: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)}`, "WARN");
-          notify("🛑 STOPPED", `${trade.name} -₹${Math.abs(pnl).toFixed(0)}`);
-          if (trade.targetOrderId) try { await cancelOrder(trade.targetOrderId); } catch { /* ignore */ }
+          log(`🛑 STOPPED: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)} (incl ₹${charges} charges)`, "WARN");
+          notify("🛑 STOPPED", `${trade.name} -₹${Math.abs(pnl).toFixed(0)} net`);
+          if (trade.targetOrderId) try { await cancelOrder(trade.targetOrderId); } catch (e) { log(`⚠️ Cancel target failed ${trade.name}: ${e.message}`, "WARN"); }
         }
       }
     } catch (e) {
