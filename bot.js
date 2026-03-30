@@ -889,7 +889,7 @@ async function start() {
         if (trade.slOrderId) {
           const s = await getOrderStatus(trade.slOrderId);
           if (s?.status === "complete") {
-            const pnl = -(trade.risk * trade.qty);
+            const pnl = -((trade.risk * trade.qty) + COSTS() * 2);
             trade.status = "STOPPED_OUT";
             trade.pnl    = pnl;
             markLoss(trade.name);
@@ -899,7 +899,7 @@ async function start() {
         if (trade.targetOrderId && trade.status === "OPEN") {
           const s = await getOrderStatus(trade.targetOrderId);
           if (s?.status === "complete") {
-            const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2));
+            const pnl = +(trade.risk * trade.qty * (trade.rrMult || 2) - COSTS() * 2);
             trade.status = "TARGET_HIT";
             trade.pnl    = pnl;
             log(`🔍 Audit: ${trade.name} Target already hit — marking TARGET_HIT`, "INFO");
