@@ -116,7 +116,7 @@ function notifyPersistent(text) {
 }
 
 // ─── IST UTILITIES ────────────────────────────────────────────────────────────
-const istNow     = () => new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+const istNow     = () => new Date(Date.now() + 5.5 * 3600000);
 const istTime    = () => istNow().toLocaleTimeString("en-IN");
 const minOfDay   = () => { const t = istNow(); return t.getHours() * 60 + t.getMinutes(); };
 const istDateStr = (d) => {
@@ -229,6 +229,40 @@ async function fetchLTP(keys) {
     if (r.status === 200 && r.data?.data) return r.data.data;
   } catch (e) {
     log(`⚠️ LTP fetch failed: ${e.message}`, "WARN");
+  }
+  return {};
+}
+
+// ─── INDEX LTP FETCHER ───────────────────────────────────────────────────────
+// Separate from fetchLTP — indices use /ltp endpoint, equities use /quotes
+
+async function fetchIndexLTP(key) {
+  try {
+    const param = encodeURIComponent(key);
+    const r = await fetchR(API_HOST, `/v3/market-quote/ltp?instrument_key=${param}`, "GET", authH());
+    if (r.status === 200 && r.data?.data) {
+      const entry = Object.values(r.data.data)[0];
+      return entry?.last_price || null;
+    }
+    log(`⚠️ Index LTP status ${r.status} for ${key}`, "WARN");
+  } catch (e) {
+    log(`⚠️ Index LTP fetch failed: ${e.message}`, "WARN");
+  }
+  return null;
+}
+
+// ─── BULK EQUITY LTP FETCHER (lightweight — for OCO simulation) ───────────────
+// Uses /ltp endpoint (no depth data needed, lower rate limit cost)
+
+async function fetchEquityLTP(keys) {
+  if (!keys || keys.length === 0) return {};
+  const param = keys.map(k => encodeURIComponent(k)).join(",");
+  try {
+    const r = await fetchR(API_HOST, `/v3/market-quote/ltp?instrument_key=${param}`, "GET", authH());
+    if (r.status === 200 && r.data?.data) return r.data.data;
+    log(`⚠️ Equity LTP status ${r.status}`, "WARN");
+  } catch (e) {
+    log(`⚠️ Equity LTP fetch failed: ${e.message}`, "WARN");
   }
   return {};
 }
@@ -361,8 +395,7 @@ const niftyState = { ltp: 0, prevClose: 0, direction: 0, lastUpdated: 0 };
 async function refreshNiftyState() {
   if (!NIFTY_FILTER()) return;
   try {
-    const ltpData = await fetchLTP([STOCKS.nifty.key]);
-    const ltp = ltpData?.[STOCKS.nifty.key]?.last_price;
+    const ltp = await fetchIndexLTP(STOCKS.nifty.key);
     if (!ltp) return;
 
     niftyState.ltp = ltp;
@@ -405,7 +438,7 @@ async function simulatePaperOCO() {
   const keys = Object.keys(keyMap);
   if (keys.length === 0) return;
 
-  const ltpData = await fetchLTP(keys);
+  const ltpData = await fetchEquityLTP(keys);
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
@@ -715,6 +748,7 @@ async function scan(strategyNames) {
     );
 
     // Batched fetch + analyze — 20 stocks at a time, 10s gap between batches
+    const nearMisses = [];     
     const BATCH_SIZE = 20;
     const BATCH_DELAY = 10000;
     const allResults = [];
@@ -779,15 +813,19 @@ async function scan(strategyNames) {
             }
           }
 
-          const signal = analyzeStock({
+          const rawSig = analyzeStock({
             candles,
             name:             stock.name,
             activeStrategies: strategyNames,
             trades,
             niftyLtp:         NIFTY_FILTER() ? niftyState.ltp      : 0,
             niftyPrevClose:   NIFTY_FILTER() ? niftyState.prevClose : 0,
-            scoreThreshold:   SCORE_THRESH(),
+            scoreThreshold:   1,
           });
+          if (rawSig && rawSig.score < SCORE_THRESH()) {
+            nearMisses.push({ name: stock.name, score: rawSig.score, strategy: rawSig.strategy, direction: rawSig.direction });
+          }
+          const signal = rawSig && rawSig.score >= SCORE_THRESH() ? rawSig : null;
 
           if (signal) {
             log(
@@ -818,53 +856,25 @@ async function scan(strategyNames) {
     try { fs.writeFileSync(SIG_FILE, JSON.stringify(signals, null, 2)); } catch { /* ignore */ }
 
     if (signals.length === 0) {
-      try {
-        if (Array.isArray(scoredStocks) && scoredStocks.length > 0) {
-          // SCORE DISTRIBUTION
-          const buckets = {
-            low: 0,
-            s4: 0,
-            s5: 0,
-            s6: 0,
-            high: 0
-          };
-          for (let i = 0; i < scoredStocks.length; i++) {
-            const s = scoredStocks[i];
-            if (!s || typeof s.score !== "number") continue;
-            if (s.score <= 3) buckets.low++;
-            else if (s.score === 4) buckets.s4++;
-            else if (s.score === 5) buckets.s5++;
-            else if (s.score === 6) buckets.s6++;
-            else buckets.high++;
-          }
-          
-          log(
-            "📊 Score dist → ≤3:" + buckets.low +
-            " | 4:" + buckets.s4 +
-            " | 5:" + buckets.s5 +
-            " | 6:" + buckets.s6 +
-            " | 7+:" + buckets.high,
-            "SCAN"
-          );
-          // TOP 3 SCORES
-          const top3 = scoredStocks
-            .filter(function(s) {
-              return s && typeof s.score === "number";
-            })
-            .sort(function(a, b) {
-              return b.score - a.score;
-            })
-            .slice(0, 3)
-            .map(function(s) {
-              return s.name + "(" + s.score + ")";
-            })
-            .join(", ");
-          if (top3.length > 0) {
-            log("📈 Top scores → " + top3, "SCAN");
-          }
+      if (nearMisses.length > 0) {
+        const buckets = { s1: 0, s2: 0, s3: 0, s4: 0, s5: 0 };
+        for (const s of nearMisses) {
+          if (s.score === 1) buckets.s1++;
+          else if (s.score === 2) buckets.s2++;
+          else if (s.score === 3) buckets.s3++;
+          else if (s.score === 4) buckets.s4++;
+          else if (s.score === 5) buckets.s5++;
         }
-      } catch (err) {
-        log("⚠️ Score debug failed: " + err.message, "WARN");
+        log(
+          `📊 Near-miss dist → 1:${buckets.s1} | 2:${buckets.s2} | 3:${buckets.s3} | 4:${buckets.s4} | 5:${buckets.s5} (threshold:${SCORE_THRESH()})`,
+          "SCAN"
+        );
+        const top3 = [...nearMisses]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3)
+          .map(s => `${s.name}(${s.score}/${s.strategy}/${s.direction})`)
+          .join(", ");
+        log(`📈 Closest misses → ${top3}`, "SCAN");
       }
       log("🚫 No signals", "SCAN");
       return;
@@ -892,7 +902,7 @@ async function scan(strategyNames) {
 // ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 let botStopped    = false;
 let lastLabel     = "";
-let lastCmdTs     = 0;
+let lastCmdTs     = Date.now();
 let lastStatusMin = -1;
 let lastScanMin   = -999; // single tracker sufficient for schedule-driven scans
 
