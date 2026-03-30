@@ -305,7 +305,7 @@ const cancelOrder = (id) =>
   fetchR(HFT_HOST, `/v3/order/cancel?order_id=${id}`, "DELETE", authH())
     .then(r => r.data);
 
-cconst modifyOrder = (id, triggerPrice, qty) =>
+const modifyOrder = (id, triggerPrice, qty) =>
   fetchR(HFT_HOST, `/v3/order/modify`, "PUT",
     { ...authH(), "Content-Type": "application/json" },
     { order_id: id, trigger_price: triggerPrice, price: 0, order_type: "SL-M", validity: "DAY", quantity: qty }
