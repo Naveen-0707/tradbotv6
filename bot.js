@@ -504,6 +504,7 @@ async function simulatePaperOCO() {
 
     const targetHit = trade.direction === "BUY" ? ltp >= trade.target : ltp <= trade.target;
     const slHit     = trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl;
+    log(`🔍 ${trade.name} targetHit=${targetHit} slHit=${slHit}`, "INFO");
 
     if (targetHit) {
       const charges = COSTS() * 2;
