@@ -301,7 +301,7 @@ const getOrderStatus = (id) =>
   fetchR(API_HOST, `/v2/order/details?order_id=${id}`, "GET", authH())
     .then(r => r.data?.data);
 
-cconst cancelOrder = (id) =>
+const cancelOrder = (id) =>
   fetchR(HFT_HOST, `/v3/order/cancel?order_id=${id}`, "DELETE", authH())
     .then(r => r.data);
 
