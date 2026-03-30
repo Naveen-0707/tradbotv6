@@ -204,7 +204,7 @@ function getOrCreateLogWatcher() {
       const newLines = buf.toString().trim().split("\n").filter(Boolean);
       for (const line of newLines) sseWrite({ type: "log", line });
       watchedLogSize = curr.size;
-    } catch {}
+    } catch (e) { console.warn(`[bridge] Log read error: ${e.message}`); }
   });
 
   console.log(G(`📋 Watching log: ${path.basename(watchedLogFile)}`));
