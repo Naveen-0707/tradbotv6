@@ -456,6 +456,7 @@ async function simulatePaperOCO() {
   if (keys.length === 0) return;
 
   const ltpData = await fetchEquityLTP(keys);
+  log(`Paper OCO: open=${open.length} keys=${keys.length} ltpResults=${Object.keys(ltpData).length}`, "INFO");
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
