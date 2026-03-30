@@ -305,10 +305,10 @@ cconst cancelOrder = (id) =>
   fetchR(HFT_HOST, `/v3/order/cancel?order_id=${id}`, "DELETE", authH())
     .then(r => r.data);
 
-const modifyOrder = (id, triggerPrice) =>
+cconst modifyOrder = (id, triggerPrice, qty) =>
   fetchR(HFT_HOST, `/v3/order/modify`, "PUT",
     { ...authH(), "Content-Type": "application/json" },
-    { order_id: id, trigger_price: triggerPrice, price: 0, order_type: "SL-M", validity: "DAY", quantity: undefined }
+    { order_id: id, trigger_price: triggerPrice, price: 0, order_type: "SL-M", validity: "DAY", quantity: qty }
   ).then(r => r.data);
 
 // ─── TRADE STATE ──────────────────────────────────────────────────────────────
@@ -547,7 +547,7 @@ async function checkLiveOCO() {
 
             if (unrealised >= oneR && !slAlreadyAtEntry) {
               try {
-                await modifyOrder(trade.slOrderId, trade.entry);
+                await modifyOrder(trade.slOrderId, trade.entry, trade.qty);
                 trade.sl      = trade.entry;
                 trade.trailed = true;
                 saveTrades();
