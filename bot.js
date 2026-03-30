@@ -463,6 +463,8 @@ async function simulatePaperOCO() {
     const ltp = ltpData?.[key]?.last_price;
     if (!ltp) continue;
 
+    log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO"); // ← ADD THIS
+
     // Update live P&L display
     trade.ltp     = +ltp.toFixed(2);
     trade.livePnl = +(
