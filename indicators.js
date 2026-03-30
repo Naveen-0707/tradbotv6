@@ -13,7 +13,10 @@
 // Returns null/[] on bad input so callers never receive NaN.
 
 function guard(arr, min, label) {
-  if (!Array.isArray(arr) || arr.length < min) return false;
+  if (!Array.isArray(arr) || arr.length < min) {
+    if (label) console.warn(`[indicators] ${label}: insufficient data (got ${Array.isArray(arr) ? arr.length : typeof arr}, need ${min})`);
+    return false;
+  }
   return true;
 }
 
