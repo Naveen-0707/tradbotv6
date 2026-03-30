@@ -134,6 +134,8 @@ function CandleChart({candles,signal}){
       {signal?.firstHigh&&<line x1={pad} y1={py(signal.firstHigh)} x2={W-pad} y2={py(signal.firstHigh)} stroke="#00b4ff" strokeWidth={1} strokeDasharray="3,2"/>}
       {signal?.firstLow&&<line x1={pad} y1={py(signal.firstLow)} x2={W-pad} y2={py(signal.firstLow)} stroke="#ff9800" strokeWidth={1} strokeDasharray="3,2"/>}
       {signal?.vwap&&signal.vwap>=mnP&&signal.vwap<=mxP&&<line x1={pad} y1={py(signal.vwap)} x2={W-pad} y2={py(signal.vwap)} stroke="#ffd54f" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.upper1&&signal.upper1>=mnP&&signal.upper1<=mxP&&<line x1={pad} y1={py(signal.upper1)} x2={W-pad} y2={py(signal.upper1)} stroke="#00e5ff" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.lower1&&signal.lower1>=mnP&&signal.lower1<=mxP&&<line x1={pad} y1={py(signal.lower1)} x2={W-pad} y2={py(signal.lower1)} stroke="#ff9800" strokeWidth={1} strokeDasharray="2,2"/>}
       {signal?.ema21&&signal.ema21>=mnP&&signal.ema21<=mxP&&<line x1={pad} y1={py(signal.ema21)} x2={W-pad} y2={py(signal.ema21)} stroke="#69f0ae" strokeWidth={1} strokeDasharray="2,2"/>}
       {signal?.superTrend&&signal.superTrend>=mnP&&signal.superTrend<=mxP&&<line x1={pad} y1={py(signal.superTrend)} x2={W-pad} y2={py(signal.superTrend)} stroke="#ff5252" strokeWidth={1} strokeDasharray="2,2"/>}
     </svg>
@@ -612,7 +614,7 @@ function FCBBotV6(){
   const lockedCapital=useMemo(()=>trades.filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.direction==="BUY").reduce((s,t)=>s+(t.entry*t.qty),0),[trades]);
   const availBal=walletData.set&&wallet>0?wallet+dailyPnL-lockedCapital:null;
   const walletPct=walletData.set&&wallet>0?Math.max(0,(availBal/wallet)*100):100;
-  const dailyLimitHit=!paperMode&&(dailyPnL<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
+  const dailyLimitHit=!paperMode&&(trades.reduce((s,t)=>s+(t.pnl!==null?t.pnl:(t.livePnl||0)),0)<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
 
   // Filtered logs
   const filteredLogs=useMemo(()=>{
