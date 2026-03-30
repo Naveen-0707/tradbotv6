@@ -112,6 +112,7 @@ function buildSignal(params) {
     rrLabel, rrMult, score, scoreBreakdown, volRatio, candles,
     firstHigh, firstLow, vwapVal, ema9, ema21,
     gapPct, yClose, adxVal, rsiVal, bbWidth, stVal,
+    upper1, upper2, lower1, lower2,
   } = params;
 
   return {
@@ -142,6 +143,10 @@ function buildSignal(params) {
     rsi:       rsiVal    != null ? r2(rsiVal)     : null,
     bbWidth:   bbWidth   != null ? r2(bbWidth)    : null,
     superTrend: stVal    != null ? r2(stVal)      : null,
+    upper1:    upper1    != null ? r2(upper1)     : null,
+    upper2:    upper2    != null ? r2(upper2)     : null,
+    lower1:    lower1    != null ? r2(lower1)     : null,
+    lower2:    lower2    != null ? r2(lower2)     : null,
   };
 }
 
