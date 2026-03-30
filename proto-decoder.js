@@ -7,14 +7,16 @@ window.FCBProto = {
   _FeedResponse: null,
 
   async init() {
-    // Load protobufjs from CDN (already used by index.html for other libs)
-    await new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.5/protobuf.min.js";
-      s.onload = resolve;
-      s.onerror = () => reject(new Error("protobufjs CDN failed to load"));
-      document.head.appendChild(s);
-    });
+    // protobufjs already loaded by index.html <script> tag — skip re-injection
+    if (typeof protobuf === "undefined") {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.5/protobuf.min.js";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("protobufjs CDN failed to load"));
+        document.head.appendChild(s);
+      });
+    }
 
     // Fetch .proto file served by bridge.js from localhost
     const res = await fetch("/MarketDataFeed.proto");
