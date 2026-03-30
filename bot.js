@@ -541,7 +541,7 @@ async function execTrade(signal) {
     if (!filled) {
       log(`⏱ Entry timeout — cancelling & skipping OCO for ${signal.name}`, "WARN");
       notify("⏱ Entry Timeout", `${signal.name} — OCO not placed`);
-      try { await cancelOrder(entryOrderId); } catch {}
+      try { await cancelOrder(entryOrderId); } catch (e) { log(`⚠️ Cancel failed for entry order ${entryOrderId}: ${e.message}`, "WARN"); }
       return;
     }
 
@@ -716,8 +716,8 @@ async function loop() {
               });
               trade.status = "SQUARED_OFF";
               log(`✅ Live squared: ${trade.name}`, "TRADE");
-              if (trade.targetOrderId) try { await cancelOrder(trade.targetOrderId); } catch {}
-              if (trade.slOrderId)     try { await cancelOrder(trade.slOrderId);     } catch {}
+              if (trade.targetOrderId) try { await cancelOrder(trade.targetOrderId); } catch (e) { log(`⚠️ Cancel target order failed ${trade.name}: ${e.message}`, "WARN"); }
+              if (trade.slOrderId)     try { await cancelOrder(trade.slOrderId);     } catch (e) { log(`⚠️ Cancel SL order failed ${trade.name}: ${e.message}`, "WARN"); }
             } catch (e) {
               log(`❌ Square-off failed ${trade.name}: ${e.message}`, "ERROR");
               notify("❌ Square-Off Failed", `${trade.name}: ${e.message.slice(0, 80)}`);
