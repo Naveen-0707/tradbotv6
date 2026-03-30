@@ -97,8 +97,9 @@ function getNiftyDirection(niftyLtp, niftyPrevClose) {
 // Applies Nifty bonus/penalty and volume bonus to a raw strategy score.
 // Returns final adjusted score (clamped to 0 minimum).
 
+// eslint-disable-next-line no-unused-vars
 function applyBonuses(rawScore, direction, volRatio, niftyDir) {
-  return rawScore; // bonuses applied once in analyzeStock after merging
+  return rawScore; // bonuses applied once in analyzeStock after merging — prevents double-counting
 }
 
 // ─── SIGNAL BUILDER ───────────────────────────────────────────────────────────
@@ -342,8 +343,9 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
   if (tc.length < 15) return null;
   if (hasOpenPosition(name, trades)) return null;
 
-  const vwapVal = vwap(tc);
-  if (!vwapVal) return null;
+  const bands = vwapBands(tc);
+  if (!bands) return null;
+  const { vwap: vwapVal, upper1, upper2, lower1, lower2 } = bands;
 
   const la = tc[tc.length - 1];
   const p1 = tc[tc.length - 2];
@@ -358,34 +360,42 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
   // ── BUY: price crossed above VWAP ──
   if (p1.c < vwapVal && la.c > vwapVal && vwap(tc.slice(0, -1)) < vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
-    const rawScore = 2;
+    // Target snaps to upper1 band if it's better than 2× risk, else fallback
+    const target = upper1 > la.c + risk * 2 ? upper1 : la.c + risk * 2;
+    // Bonus +1 if price bounced from lower2 (oversold zone) in last 3 candles
+    const nearLower2 = tc.slice(-3).some(c => c.l <= lower2 * 1.002);
+    const rawScore = nearLower2 ? 3 : 2;
     const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
     return buildSignal({
       name, strategy: "VWAP", direction: "BUY",
-      entry: la.c, target: la.c + risk * 2, sl: la.c - risk, risk,
+      entry: la.c, target, sl: la.c - risk, risk,
       rrLabel: "1:2", rrMult: 2, score,
-      scoreBreakdown: { VWAP: 2 },
+      scoreBreakdown: { VWAP: rawScore },
       volRatio: vr, candles: tc,
       firstHigh: Math.max(...tc.slice(-5).map(c => c.h)),
       firstLow:  Math.min(...tc.slice(-5).map(c => c.l)),
-      vwapVal,
+      vwapVal, upper1, upper2, lower1, lower2,
     });
   }
 
   // ── SELL: price crossed below VWAP ──
   if (p1.c > vwapVal && la.c < vwapVal && vwap(tc.slice(0, -1)) > vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
-    const rawScore = 2;
+    // Target snaps to lower1 band if it's better than 2× risk, else fallback
+    const target = lower1 < la.c - risk * 2 ? lower1 : la.c - risk * 2;
+    // Bonus +1 if price rejected from upper2 (overbought zone) in last 3 candles
+    const nearUpper2 = tc.slice(-3).some(c => c.h >= upper2 * 0.998);
+    const rawScore = nearUpper2 ? 3 : 2;
     const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
     return buildSignal({
       name, strategy: "VWAP", direction: "SELL",
-      entry: la.c, target: la.c - risk * 2, sl: la.c + risk, risk,
+      entry: la.c, target, sl: la.c + risk, risk,
       rrLabel: "1:2", rrMult: 2, score,
-      scoreBreakdown: { VWAP: 2 },
+      scoreBreakdown: { VWAP: rawScore },
       volRatio: vr, candles: tc,
       firstHigh: Math.max(...tc.slice(-5).map(c => c.h)),
       firstLow:  Math.min(...tc.slice(-5).map(c => c.l)),
-      vwapVal,
+      vwapVal, upper1, upper2, lower1, lower2,
     });
   }
 
@@ -481,9 +491,7 @@ function gapAnalyze(candles, name, trades, niftyDir) {
   if (!Array.isArray(candles) || candles.length < 15) return null;
   if (hasOpenPosition(name, trades)) return null;
 
-  const toIST = ts =>
-    new Date(new Date(ts).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-
+  
   // Find unique dates (oldest to newest, candles are oldest-first)
   const dates = [...new Set(candles.map(c => istDate(c.ts)))];
   if (dates.length < 2) return null;
@@ -1128,7 +1136,7 @@ function analyzeStock({
       if (sig) rawSignals.push(sig);
     } catch (e) {
       // Individual strategy errors never crash the scan loop
-      // bot.js will log this via its try/catch around analyzeStock
+      console.warn(`[strategies] ${stratName} failed for ${name}: ${e.message}`);
     }
   }
 
