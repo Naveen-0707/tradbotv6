@@ -223,7 +223,7 @@ async function fetchCandles(instrumentKey, count) {
 async function fetchLTP(keys) {
   if (!keys || keys.length === 0) return {};
   // Upstox allows comma-separated keys in query param
-  const param = keys.map(k => encodeURIComponent(k)).join("%2C");
+  const param = keys.map(k => encodeURIComponent(k)).join(",");
   try {
     const r = await fetchR(API_HOST, `/v3/market-quote/quotes?instrument_key=${param}`, "GET", authH());
     if (r.status === 200 && r.data?.data) return r.data.data;
