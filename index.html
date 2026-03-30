@@ -577,9 +577,15 @@ function FCBBotV6(){
         }catch{}
       };
       ws.onerror=()=>setWsStatus("disconnected");
+      ws._reconnectDelay = ws._reconnectDelay || 5000;
       ws.onclose=()=>{
         clearInterval(hb);setWsStatus("disconnected");
-        wsReconnRef.current=setTimeout(()=>connectWS(tkn),30000);// 30s
+        const delay = Math.min(ws._reconnectDelay, 120000); // cap at 2 mins
+        log(`🔄 WS closed — reconnecting in ${delay/1000}s`);
+        wsReconnRef.current=setTimeout(()=>{
+          ws._reconnectDelay = delay * 2; // exponential backoff
+          connectWS(tkn);
+        }, delay);
       };
       wsRef.current=ws;
     }catch(e){setWsStatus("disconnected");wsReconnRef.current=setTimeout(()=>connectWS(tkn),30000);}
