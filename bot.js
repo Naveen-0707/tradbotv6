@@ -438,7 +438,8 @@ async function simulatePaperOCO() {
             const aboveEntry = trade.direction === "BUY"
               ? ltp > trade.entry
               : ltp < trade.entry;
-            if (aboveEntry && trade.sl < trade.entry) {
+            const slNeedsTrail = trade.direction === "BUY" ? trade.sl < trade.entry : trade.sl > trade.entry;
+            if (aboveEntry && slNeedsTrail) {
               trade.sl      = trade.entry; // move SL to breakeven
               trade.trailed = true;
               log(`🔒 Trail: ${trade.name} SL moved to entry ₹${trade.entry} (profit ≥ 1R)`, "TRADE");
@@ -674,7 +675,6 @@ async function execTrade(signal) {
 }
 
 // ─── SCAN — BUG #6 FIX ───────────────────────────────────────────────────────
-// ─── SCAN — BUG #6 FIX ───────────────────────────────────────────────────────
 // try/finally ensures scanning flag ALWAYS resets, even on uncaught errors.
 
 let scanning  = false;
@@ -766,7 +766,7 @@ async function scan(strategyNames) {
 
           // #15: news spike filter — reject if last candle range > 3× ATR
           if (candles.length >= 15) {
-            const { calcATR } = require("./indicators");
+            const { isStale, calcATR } = require("./indicators");
             const atrVals = calcATR(candles, 14);
             if (atrVals.length > 0) {
               const atr = atrVals[atrVals.length - 1];
