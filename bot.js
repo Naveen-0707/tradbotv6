@@ -828,7 +828,7 @@ async function scan(strategyNames) {
             s6: 0,
             high: 0
           };
-          for (let i = 0; i < scoredStocks.length; i++) 
+          for (let i = 0; i < scoredStocks.length; i++) {
             const s = scoredStocks[i];
             if (!s || typeof s.score !== "number") continue;
             if (s.score <= 3) buckets.low++;
@@ -837,6 +837,7 @@ async function scan(strategyNames) {
             else if (s.score === 6) buckets.s6++;
             else buckets.high++;
           }
+          
           log(
             "📊 Score dist → ≤3:" + buckets.low +
             " | 4:" + buckets.s4 +
