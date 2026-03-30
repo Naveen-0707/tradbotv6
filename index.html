@@ -403,7 +403,9 @@ function FCBBotV6(){
   const[notifPerm,setNotifPerm]  =useState(typeof Notification!=="undefined"?Notification.permission:"unsupported");
   const[canInstall,setCanInstall]=useState(!!window.deferredInstallPrompt);
 
-  const wsRef=useRef(null);const wsReconnRef=useRef(null);
+  const wsRef = useRef(null);
+  const wsReconnRef = useRef(null);
+  const wsReconnectDelayRef = useRef(5000);
   const ocoRef=useRef(null);
   const logEndRef=useRef(null);
   const autoScrollRef=useRef(true);
@@ -545,6 +547,8 @@ function FCBBotV6(){
       let hb=null;
       ws.onopen=()=>{
         setWsStatus("connected");
+        wsReconnectDelayRef.current = 5000;
+        
         // Subscribe to Nifty for direction display
         const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank"];
         const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:keys}});
@@ -577,13 +581,13 @@ function FCBBotV6(){
         }catch{}
       };
       ws.onerror=()=>setWsStatus("disconnected");
-      ws._reconnectDelay = ws._reconnectDelay || 5000;
-      ws.onclose=()=>{
-        clearInterval(hb);setWsStatus("disconnected");
-        const delay = Math.min(ws._reconnectDelay, 120000); // cap at 2 mins
+      ws.onclose = () => {
+        clearInterval(hb);
+        setWsStatus("disconnected");
+        const delay = Math.min(wsReconnectDelayRef.current, 120000);
         console.log(`🔄 WS closed — reconnecting in ${delay/1000}s`);
-        wsReconnRef.current=setTimeout(()=>{
-          ws._reconnectDelay = delay * 2; // exponential backoff
+        wsReconnRef.current = setTimeout(() => {
+          wsReconnectDelayRef.current = Math.min(delay * 2, 120000);
           connectWS(tkn);
         }, delay);
       };
