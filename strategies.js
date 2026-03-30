@@ -232,7 +232,8 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const fcbEntry = r2(Math.min(la.l, la.c) * 0.9985);
     const risk    = fH - fcbEntry;
     const riskPct = (risk / fcbEntry) * 100;
-    if (hasFVG && retrace && engulfing && riskPct >= 0.5) {
+    const atrPct = atrNormalizedRisk(tc);
+    if (hasFVG && retrace && engulfing && riskPct >= 0.5 && atrPct < 2.8) {
       const rawScore = 3;
       const score = applyBonuses(rawScore, "SELL", vr, niftyDir);
       return buildSignal({
