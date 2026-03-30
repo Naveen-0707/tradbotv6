@@ -456,11 +456,14 @@ async function simulatePaperOCO() {
   if (keys.length === 0) return;
 
   const ltpData = await fetchEquityLTP(keys);
+  log(`🔍 keyMap key: ${Object.keys(keyMap)[0]}`, "INFO");
+  log(`🔍 ltpData key: ${Object.keys(ltpData)[0]}`, "INFO");
   log(`Paper OCO: open=${open.length} keys=${keys.length} ltpResults=${Object.keys(ltpData).length}`, "INFO");
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
-    const ltp = ltpData?.[key]?.last_price;
+    const normalizedKey = key.replace("|", ":");
+    const ltp = ltpData?.[normalizedKey]?.last_price || ltpData?.[key]?.last_price;
     if (!ltp) continue;
 
     log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO"); // ← ADD THIS
