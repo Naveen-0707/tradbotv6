@@ -737,7 +737,7 @@ async function loop() {
   // Status log every 5 minutes
   if (m !== lastStatusMin && m % 5 === 0) {
     lastStatusMin = m;
-    const pnl = dailyPnL();
+    const pnl = dailyTotalPnL();
     log(
       `⏰ ${istTime()} | ${sched.label}` +
       ` | P&L:₹${pnl.toFixed(0)}` +
