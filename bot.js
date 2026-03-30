@@ -462,8 +462,8 @@ async function simulatePaperOCO() {
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
-    const normalizedKey = key.replace("|", ":");
-    const ltp = ltpData?.[normalizedKey]?.last_price || ltpData?.[key]?.last_price;
+    const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(trade.name.toUpperCase()));
+    const ltp = ltpEntry?.[1]?.last_price;
     if (!ltp) continue;
 
     log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO"); // ← ADD THIS
@@ -542,7 +542,8 @@ async function checkLiveOCO() {
         const stock = allStockList.find(s => s.name === trade.name);
         if (stock) {
           const ltpData = await fetchEquityLTP([stock.key]);
-          const ltp = ltpData?.[stock.key]?.last_price;
+          const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(stock.name.toUpperCase()));
+          const ltp = ltpEntry?.[1]?.last_price;
           if (ltp) {
             const unrealised = trade.direction === "BUY"
               ? (ltp - trade.entry) * trade.qty
