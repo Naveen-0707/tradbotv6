@@ -275,13 +275,42 @@ const cancelOrder = (id) =>
 let trades = [];
 
 function loadTrades() {
-  try { trades = JSON.parse(fs.readFileSync(TRD_FILE, "utf8")); }
-  catch { trades = []; }
-}
+  // Try primary file first, fall back to backup if corrupt
+  const tryLoad = (file) => {
+    try {
+      const raw = fs.readFileSync(file, "utf8");
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error("not an array");
+      return parsed;
+    } catch { return null; }
+  };
 
+  const primary = tryLoad(TRD_FILE);
+  if (primary !== null) { trades = primary; return; }
+
+  log("⚠️ fcb_trades.json corrupt — trying backup", "WARN");
+  const backup = tryLoad(TRD_FILE + ".bak");
+  if (backup !== null) {
+    trades = backup;
+    log(`⚠️ Recovered ${trades.length} trade(s) from backup`, "WARN");
+    saveTrades(); // restore primary from backup
+    return;
+  }
+
+  log("⚠️ Both trade files unreadable — starting fresh", "WARN");
+  trades = [];
+}
 function saveTrades() {
-  try { fs.writeFileSync(TRD_FILE, JSON.stringify(trades, null, 2)); }
-  catch (e) { log(`⚠️ saveTrades: ${e.message}`, "WARN"); }
+  try {
+    const json = JSON.stringify(trades, null, 2);
+    // Validate before writing — never save corrupt data
+    JSON.parse(json);
+    const tmp = TRD_FILE + ".tmp";
+    fs.writeFileSync(tmp, json);
+    fs.renameSync(tmp, TRD_FILE); // atomic on Linux/Android
+    // Keep a rolling backup (last known good)
+    fs.writeFileSync(TRD_FILE + ".bak", json);
+  } catch (e) { log(`⚠️ saveTrades: ${e.message}`, "WARN"); }
 }
 
 // BUG #14 FIX: paper trades do NOT count toward live trade limit
@@ -327,7 +356,7 @@ function calcQty(risk, entry) {
 }
 
 // ─── NIFTY STATE — BUG #10 FIX ───────────────────────────────────────────────
-const niftyState = { ltp: 0, prevClose: 0, direction: 0 };
+const niftyState = { ltp: 0, prevClose: 0, direction: 0, lastUpdated: 0 };
 
 async function refreshNiftyState() {
   if (!NIFTY_FILTER()) return;
@@ -350,7 +379,8 @@ async function refreshNiftyState() {
     // Direction: >0.1% change = meaningful
     if (niftyState.prevClose > 0) {
       const chg = ((ltp - niftyState.prevClose) / niftyState.prevClose) * 100;
-      niftyState.direction = chg > 0.1 ? 1 : chg < -0.1 ? -1 : 0;
+      niftyState.direction  = chg > 0.1 ? 1 : chg < -0.1 ? -1 : 0;
+      niftyState.lastUpdated = Date.now();
     }
   } catch (e) {
     log(`⚠️ Nifty refresh: ${e.message}`, "WARN");
@@ -388,6 +418,35 @@ async function simulatePaperOCO() {
       (trade.direction === "BUY" ? ltp - trade.entry : trade.entry - ltp) * trade.qty
     ).toFixed(0);
     changed = true;
+
+    // #10: 1R trailing stop — move SL to entry once profit >= 1R
+    if (!trade.trailed) {
+      const unrealised = trade.direction === "BUY"
+        ? (ltp - trade.entry) * trade.qty
+        : (trade.entry - ltp) * trade.qty;
+      const oneR = trade.risk * trade.qty;
+
+      if (unrealised >= oneR) {
+        // Check VWAP condition — price must still be on correct side
+        const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+        const stock = allStockList.find(x => x.name === trade.name);
+        if (stock) {
+          try {
+            const ltpData = await fetchLTP([stock.key]);
+            const quote   = ltpData?.[stock.key];
+            // Use last_price as proxy — full VWAP needs candles, this is a safety check
+            const aboveEntry = trade.direction === "BUY"
+              ? ltp > trade.entry
+              : ltp < trade.entry;
+            if (aboveEntry && trade.sl < trade.entry) {
+              trade.sl      = trade.entry; // move SL to breakeven
+              trade.trailed = true;
+              log(`🔒 Trail: ${trade.name} SL moved to entry ₹${trade.entry} (profit ≥ 1R)`, "TRADE");
+            }
+          } catch { /* non-fatal */ }
+        }
+      }
+    }
 
     const targetHit = trade.direction === "BUY" ? ltp >= trade.target : ltp <= trade.target;
     const slHit     = trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl;
@@ -456,6 +515,20 @@ async function checkLiveOCO() {
 
 // ─── EXECUTE TRADE ────────────────────────────────────────────────────────────
 async function execTrade(signal) {
+  if (executing) {
+    log(`⚠️ Trade execution busy — skip ${signal.name}`, "WARN");
+    return;
+  }
+  executing = true;
+  try {
+  // Gate 0: global trade cooldown
+  const timeSinceLast = Date.now() - lastTradeTime;
+  if (lastTradeTime > 0 && timeSinceLast < TRADE_COOLDOWN) {
+    const waitSec = Math.ceil((TRADE_COOLDOWN - timeSinceLast) / 1000);
+    log(`⏳ Global cooldown — ${waitSec}s remaining — skip ${signal.name}`, "WARN");
+    return;
+  }
+
   // Gate 1: daily loss
   if (dailyTotalPnL() <= -MLOSS()) {
     log(`🛑 Daily loss limit ₹${MLOSS()} — skip ${signal.name}`, "WARN");
@@ -474,7 +547,31 @@ async function execTrade(signal) {
     return;
   }
 
-  // Gate 4: qty calculation (BUG #2 & #11)
+  // Gate 4: spread/slippage check — reject if spread > 0.3% of entry
+  try {
+    const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+    const stock = allStockList.find(s => s.name === signal.name);
+    if (stock) {
+      const ltpData = await fetchLTP([stock.key]);
+      const quote = ltpData?.[stock.key];
+      if (quote?.depth?.top) {
+        const bestBid = quote.depth.top[0]?.bidP || 0;
+        const bestAsk = quote.depth.top[0]?.askP || 0;
+        if (bestBid > 0 && bestAsk > 0) {
+          const spread = ((bestAsk - bestBid) / signal.entry) * 100;
+          if (spread > 0.3) {
+            log(`⚠️ Spread too wide: ${signal.name} spread ${spread.toFixed(3)}% > 0.3% — skip`, "WARN");
+            return;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    log(`⚠️ Spread check failed ${signal.name}: ${e.message} — proceeding`, "WARN");
+    // non-fatal — proceed with trade if spread check errors
+  }
+
+  // Gate 5: qty calculation (BUG #2 & #11)
   const qty = calcQty(signal.risk, signal.entry);
   if (qty <= 0) {
     log(`🛑 Insufficient balance for ${signal.name} @ ₹${signal.entry} (avail:₹${availableBalance().toFixed(0)}) — skip`, "WARN");
@@ -500,6 +597,7 @@ async function execTrade(signal) {
   // ── PAPER ──
   if (PAPER()) {
     record.status = "PAPER";
+    lastTradeTime = Date.now();
     trades.push(record);
     saveTrades();
     log(
@@ -559,6 +657,7 @@ async function execTrade(signal) {
     record.targetOrderId = targetOrderId;
     record.slOrderId     = slOrderId;
 
+    lastTradeTime = Date.now();
     trades.push(record);
     saveTrades();
 
@@ -569,12 +668,19 @@ async function execTrade(signal) {
     log(`❌ Order failed [${signal.name}]: ${e.message}`, "ERROR");
     notify("❌ Order Failed", `${signal.name}: ${e.message.slice(0, 100)}`);
   }
+  } finally {
+    executing = false;
+  }
 }
 
 // ─── SCAN — BUG #6 FIX ───────────────────────────────────────────────────────
+// ─── SCAN — BUG #6 FIX ───────────────────────────────────────────────────────
 // try/finally ensures scanning flag ALWAYS resets, even on uncaught errors.
 
-let scanning = false;
+let scanning  = false;
+let executing        = false; // mutex — prevents concurrent execTrade() calls
+let lastTradeTime    = 0;     // global cooldown — min gap between any two trades
+const TRADE_COOLDOWN = 120000; // 2 minutes in ms
 
 async function scan(strategyNames) {
   if (scanning) {
@@ -590,6 +696,15 @@ async function scan(strategyNames) {
 
     const stocks      = getStocksForTier(STOCK_TIER());
     const candleCount = 75; // enough for all indicators (ST_MACD/ADX need 60+)
+
+    // #8: warn if Nifty feed is stale (not updated in last 5 mins during market hours)
+    if (isMarket() && NIFTY_FILTER() && niftyState.lastUpdated > 0) {
+      const niftyAge = Date.now() - niftyState.lastUpdated;
+      if (niftyAge > 5 * 60000) {
+        log(`⚠️ Nifty feed stale — last update ${Math.floor(niftyAge/60000)}m ago — direction filter unreliable`, "WARN");
+        niftyState.direction = 0; // reset to neutral so no trades are blocked/penalised
+      }
+    }
 
     const niftyIcon = niftyState.direction > 0 ? "🟢" : niftyState.direction < 0 ? "🔴" : "⚪";
     log(
@@ -616,6 +731,52 @@ async function scan(strategyNames) {
           if (isStale(candles, 3)) {
             log(`⏱ Stale: ${stock.name} — skipped`, "WARN");
             return [];
+          }
+
+          // #13: opening volatility shield — 9:20–9:22 require range < 1.5%
+          const openMin = minOfDay();
+          if (openMin >= 560 && openMin <= 562) {
+            const todayCs = candles.filter(c => {
+              const t = new Date(new Date(c.ts).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+              return t.toDateString() === new Date(Date.now() + 5.5 * 3600000).toDateString();
+            });
+            if (todayCs.length >= 2) {
+              const rngHigh = Math.max(...todayCs.map(c => c.h));
+              const rngLow  = Math.min(...todayCs.map(c => c.l));
+              const rngPct  = ((rngHigh - rngLow) / rngLow) * 100;
+              if (rngPct > 1.5) {
+                log(`🛡 Opening shield: ${stock.name} range ${rngPct.toFixed(2)}% > 1.5% — skipped`, "WARN");
+                return [];
+              }
+            }
+          }
+
+          // #14: midday low-volume protection — require 2× volume 12:00–1:15 PM
+          const candleMin = minOfDay();
+          if (candleMin >= 720 && candleMin <= 795) {
+            const av = candles.length >= 2
+              ? candles.slice(-(11)).slice(0, -1).reduce((s, c) => s + c.v, 0) / Math.max(1, candles.slice(-(11)).slice(0, -1).length)
+              : 1;
+            const lastVol = candles[candles.length - 1].v;
+            if (av > 0 && lastVol < av * 2) {
+              log(`🕐 Midday low-vol: ${stock.name} vol ${lastVol} < 2×avg ${(av*2).toFixed(0)} — skipped`, "WARN");
+              return [];
+            }
+          }
+
+          // #15: news spike filter — reject if last candle range > 3× ATR
+          if (candles.length >= 15) {
+            const { calcATR } = require("./indicators");
+            const atrVals = calcATR(candles, 14);
+            if (atrVals.length > 0) {
+              const atr = atrVals[atrVals.length - 1];
+              const last = candles[candles.length - 1];
+              const candleRange = last.h - last.l;
+              if (candleRange > atr * 3) {
+                log(`⚡ Spike: ${stock.name} range ${candleRange.toFixed(2)} > 3×ATR ${(atr*3).toFixed(2)} — skipped`, "WARN");
+                return [];
+              }
+            }
           }
 
           const signal = analyzeStock({
