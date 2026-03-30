@@ -818,6 +818,53 @@ async function scan(strategyNames) {
     try { fs.writeFileSync(SIG_FILE, JSON.stringify(signals, null, 2)); } catch { /* ignore */ }
 
     if (signals.length === 0) {
+      try {
+        if (Array.isArray(scoredStocks) && scoredStocks.length > 0) {
+          // SCORE DISTRIBUTION
+          const buckets = {
+            low: 0,
+            s4: 0,
+            s5: 0,
+            s6: 0,
+            high: 0
+          };
+          for (let i = 0; i < scoredStocks.length; i++) 
+            const s = scoredStocks[i];
+            if (!s || typeof s.score !== "number") continue;
+            if (s.score <= 3) buckets.low++;
+            else if (s.score === 4) buckets.s4++;
+            else if (s.score === 5) buckets.s5++;
+            else if (s.score === 6) buckets.s6++;
+            else buckets.high++;
+          }
+          log(
+            "📊 Score dist → ≤3:" + buckets.low +
+            " | 4:" + buckets.s4 +
+            " | 5:" + buckets.s5 +
+            " | 6:" + buckets.s6 +
+            " | 7+:" + buckets.high,
+            "SCAN"
+          );
+          // TOP 3 SCORES
+          const top3 = scoredStocks
+            .filter(function(s) {
+              return s && typeof s.score === "number";
+            })
+            .sort(function(a, b) {
+              return b.score - a.score;
+            })
+            .slice(0, 3)
+            .map(function(s) {
+              return s.name + "(" + s.score + ")";
+            })
+            .join(", ");
+          if (top3.length > 0) {
+            log("📈 Top scores → " + top3, "SCAN");
+          }
+        }
+      } catch (err) {
+        log("⚠️ Score debug failed: " + err.message, "WARN");
+      }
       log("🚫 No signals", "SCAN");
       return;
     }
