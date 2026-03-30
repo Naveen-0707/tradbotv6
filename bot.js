@@ -863,7 +863,6 @@ async function start() {
   }
 
   // Ensure cmd file exists
-  // Ensure cmd file exists
   if (!fs.existsSync(CMD_FILE)) {
     fs.writeFileSync(CMD_FILE, JSON.stringify({ cmd: "noop", ts: 0 }));
   }
@@ -940,8 +939,6 @@ process.on("SIGTERM", () => { log("Stopped (SIGTERM)", "INFO"); exec("termux-wak
 process.on("uncaughtException",  e => { log(`💥 Uncaught: ${e.message}`, "ERROR"); notify("⚠️ Bot Error", e.message.slice(0, 100)); });
 process.on("unhandledRejection", r => { const m = r instanceof Error ? r.message : String(r); log(`💥 Rejection: ${m}`, "ERROR"); });
 
-// ─── EXPORTS (for bridge.js to read current log path) ─────────────────────────
-module.exports = { getCurrentLogFile };
-
+// bot.js has no exports — bridge.js computes log path independently
 // ─── GO ───────────────────────────────────────────────────────────────────────
 start().catch(e => { console.error("Fatal:", e.message); process.exit(1); });
