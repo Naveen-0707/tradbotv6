@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="theme-color" content="#070d16"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.upstox.com https://api-hft.upstox.com wss:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; font-src 'self' https: data:;"/>
 <title>⚡ FCB BOT V6</title>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -84,10 +85,14 @@ async function fetchWithRetry(url,opts={},retries=3){
 }
 
 // ── API CALLS ─────────────────────────────────────────────────────────────
+const adminHeaders=()=>{
+  const key=(localStorage.getItem("fcb_v6_admin_key")||"").trim();
+  return key?{"x-fcb-admin-key":key}:{};
+};
 const api={
-  get: url=>fetchWithRetry(url).then(r=>r.json()),
-  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>r.json()),
-  del: url=>fetchWithRetry(url,{method:"DELETE"}).then(r=>r.json()),
+  get: url=>fetchWithRetry(url,{headers:{...adminHeaders()}}).then(r=>r.json()),
+  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json",...adminHeaders()},body:JSON.stringify(body)}).then(r=>r.json()),
+  del: url=>fetchWithRetry(url,{method:"DELETE",headers:{...adminHeaders()}}).then(r=>r.json()),
   cmd:(cmd,extra={})=>api.post("/api/cmd",{cmd,...extra}),
 };
 
@@ -108,7 +113,7 @@ const getProfile=async t=>{const r=await fetchWithRetry(`${UPSTOX_BASE}/user/pro
 
 // ── LOCAL STORAGE ─────────────────────────────────────────────────────────
 // Only for token, profile, settings, wallet — NOT for logs (server-side now)
-const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet"};
+const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet",ADMIN_KEY:"fcb_v6_admin_key"};
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
 
@@ -681,14 +686,10 @@ function FCBBotV6(){
         // Sync to bot so hasOpenPosition() fires correctly for UI-placed trades
         try{ await api.post("/api/cmd",{cmd:"manual_paper",trade:t}); }catch{}
       }else{
-        // Find instrument key from STRAT_CFG — we need it for live orders
-        // Fetch from config endpoint to get the stock list
-        addAlert(`🔄 Placing: ${signal.direction} ${qty}× ${signal.name}`,"info");
-        const cfg=await api.get("/api/config");
-        // Note: in live mode, bot.js handles the order via its own scan
-        // UI direct order is only for manual trades via signal card
-        // For simplicity we use the scan cmd which bot executes
-        addAlert("⚠️ Use SCAN for live trades (bot executes)","warn");
+        // Live safety: manual one-tap live execution from signal card is disabled.
+        // Use SCAN/AUTO so bot.js executes live entries with its full guards.
+        addAlert("⚠️ Live manual trade disabled. Use SCAN/AUTO (bot executes).","warn");
+        return;
       }
     }catch(e){addAlert("❌ Trade error: "+e.message,"error");}
     setTrading(false);
@@ -888,9 +889,31 @@ function FCBBotV6(){
         <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
           <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2,gap:2}}>
             {["PAPER","LIVE"].map(m=>(
-              <button key={m} onClick={()=>{const pm=m==="PAPER";setPaperMode(pm);api.post("/api/settings",{paperMode:pm});}} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#2a4a6a",fontWeight:700}}>{m}</button>
+              <button key={m} onClick={async()=>{
+                const pm=m==="PAPER";
+                if(!pm){
+                  const confirm=window.prompt("Type LIVE to enable real orders:");
+                  if(confirm!=="LIVE"){addAlert("❌ LIVE mode cancelled","warn");return;}
+                  const r=await api.post("/api/settings",{paperMode:false,confirmLive:"LIVE"});
+                  if(r?.ok===false){addAlert(`❌ ${r.error||"LIVE mode blocked"}`,"error");return;}
+                }else{
+                  await api.post("/api/settings",{paperMode:true});
+                }
+                setPaperMode(pm);
+              }} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#2a4a6a",fontWeight:700}}>{m}</button>
             ))}
           </div>
+          <button onClick={()=>{
+            const existing=(localStorage.getItem("fcb_v6_admin_key")||"").trim();
+            const next=window.prompt("Set admin key for secured bridge (leave blank to clear):",existing);
+            if(next===null)return;
+            const v=next.trim();
+            if(v)localStorage.setItem("fcb_v6_admin_key",v);
+            else localStorage.removeItem("fcb_v6_admin_key");
+            addAlert(v?"🔐 Admin key saved":"🧹 Admin key cleared","info");
+          }} style={{padding:"4px 8px",borderRadius:7,border:"1px solid rgba(120,170,255,0.25)",background:"rgba(120,170,255,0.08)",color:"#7fb1ff",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700}}>
+            🔐 KEY
+          </button>
           <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#2a4a6a",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
             <span>⏰</span>{autoMode?"AUTO ON":"AUTO OFF"}
           </button>
