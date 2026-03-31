@@ -475,32 +475,56 @@ async function simulatePaperOCO() {
     ).toFixed(0);
     changed = true;
 
-    // #10: 1R trailing stop — move SL to entry once profit >= 1R
-    if (!trade.trailed) {
-      const unrealised = trade.direction === "BUY"
-        ? (ltp - trade.entry) * trade.qty
-        : (trade.entry - ltp) * trade.qty;
+    // #10: Step trailing — 1R→near breakeven, 2R→lock 0.5R profit, 3R→lock 1R profit
+    {
       const oneR = trade.risk * trade.qty;
+      const step = trade.trailStep || 0;
 
-      if (unrealised >= oneR) {
-        // Check VWAP condition — price must still be on correct side
+      // Fetch fresh LTP to avoid fake spike trigger
+      let freshLtp = ltp;
+      try {
         const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
         const stock = allStockList.find(x => x.name === trade.name);
         if (stock) {
-          try {
-            const ltpData = await fetchEquityLTP([stock.key]);
-            const quote   = ltpData?.[stock.key];
-            // Use last_price as proxy — full VWAP needs candles, this is a safety check
-            const aboveEntry = trade.direction === "BUY"
-              ? ltp > trade.entry
-              : ltp < trade.entry;
-            const slNeedsTrail = trade.direction === "BUY" ? trade.sl < trade.entry : trade.sl > trade.entry;
-            if (aboveEntry && slNeedsTrail) {
-              trade.sl      = trade.entry; // move SL to breakeven
-              trade.trailed = true;
-              log(`🔒 Trail: ${trade.name} SL moved to entry ₹${trade.entry} (profit ≥ 1R)`, "TRADE");
-            }
-          } catch { /* non-fatal */ }
+          const freshData  = await fetchEquityLTP([stock.key]);
+          const freshEntry = Object.entries(freshData).find(([k]) => k.toUpperCase().includes(trade.name.toUpperCase()));
+          freshLtp = freshEntry?.[1]?.last_price || ltp;
+        }
+      } catch { /* non-fatal, fallback to ltp */ }
+
+      const freshUnrealised = trade.direction === "BUY"
+        ? (freshLtp - trade.entry) * trade.qty
+        : (trade.entry - freshLtp) * trade.qty;
+
+      if (step < 3 && freshUnrealised >= 3 * oneR) {
+        // 3R profit → SL to entry + 1R (locking 1R profit)
+        const newSL = +(trade.direction === "BUY"
+          ? trade.entry + trade.risk
+          : trade.entry - trade.risk).toFixed(2);
+        if (trade.direction === "BUY" ? newSL > trade.sl : newSL < trade.sl) {
+          trade.sl        = newSL;
+          trade.trailStep = 3;
+          log(`🔒 Trail Step 3: ${trade.name} SL → ₹${trade.sl} (profit ≥ 3R)`, "TRADE");
+        }
+      } else if (step < 2 && freshUnrealised >= 2 * oneR) {
+        // 2R profit → SL to entry + 0.5R (locking 0.5R profit)
+        const newSL = +(trade.direction === "BUY"
+          ? trade.entry + (trade.risk * 0.5)
+          : trade.entry - (trade.risk * 0.5)).toFixed(2);
+        if (trade.direction === "BUY" ? newSL > trade.sl : newSL < trade.sl) {
+          trade.sl        = newSL;
+          trade.trailStep = 2;
+          log(`🔒 Trail Step 2: ${trade.name} SL → ₹${trade.sl} (profit ≥ 2R)`, "TRADE");
+        }
+      } else if (step < 1 && freshUnrealised >= oneR) {
+        // 1R profit → SL to entry - 0.3R (buffer, not exact breakeven)
+        const newSL = +(trade.direction === "BUY"
+          ? trade.entry - (trade.risk * 0.3)
+          : trade.entry + (trade.risk * 0.3)).toFixed(2);
+        if (trade.direction === "BUY" ? newSL > trade.sl : newSL < trade.sl) {
+          trade.sl        = newSL;
+          trade.trailStep = 1;
+          log(`🔒 Trail Step 1: ${trade.name} SL → ₹${trade.sl} (profit ≥ 1R, buffer applied)`, "TRADE");
         }
       }
     }
@@ -536,39 +560,55 @@ async function checkLiveOCO() {
 
   for (const trade of open) {
     try {
-      // ── LIVE TRAILING STOP — move SL to entry once profit >= 1R ──
-      if (!trade.trailed && trade.slOrderId) {
+      // ── LIVE TRAILING STOP — Step trailing: 1R→near BE, 2R→lock 0.5R, 3R→lock 1R ──
+      if (trade.slOrderId) {
         const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
         const stock = allStockList.find(s => s.name === trade.name);
         if (stock) {
-          const ltpData = await fetchEquityLTP([stock.key]);
-          const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(stock.name.toUpperCase()));
-          const ltp = ltpEntry?.[1]?.last_price;
-          if (ltp) {
-            const unrealised = trade.direction === "BUY"
-              ? (ltp - trade.entry) * trade.qty
-              : (trade.entry - ltp) * trade.qty;
-            const oneR = trade.risk * trade.qty;
-            const slAlreadyAtEntry = trade.direction === "BUY"
-              ? trade.sl >= trade.entry
-              : trade.sl <= trade.entry;
+          try {
+            const ltpData  = await fetchEquityLTP([stock.key]);
+            const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(stock.name.toUpperCase()));
+            const freshLtp = ltpEntry?.[1]?.last_price;
+            if (freshLtp) {
+              const unrealised = trade.direction === "BUY"
+                ? (freshLtp - trade.entry) * trade.qty
+                : (trade.entry - freshLtp) * trade.qty;
+              const oneR = trade.risk * trade.qty;
+              const step = trade.trailStep || 0;
 
-            if (unrealised >= oneR && !slAlreadyAtEntry) {
-              try {
-                await modifyOrder(trade.slOrderId, trade.entry, trade.qty);
-                trade.sl      = trade.entry;
-                trade.trailed = true;
-                saveTrades();
-                log(`🔒 LIVE Trail: ${trade.name} SL moved to entry ₹${trade.entry} (profit ≥ 1R, ₹${unrealised.toFixed(0)})`, "TRADE");
-                notify(`🔒 Trail — ${trade.name}`, `SL moved to breakeven ₹${trade.entry}`);
-              } catch (e) {
-                log(`⚠️ Trail modify failed ${trade.name}: ${e.message} — SL unchanged`, "WARN");
+              let newSL   = null;
+              let newStep = step;
+
+              if (step < 3 && unrealised >= 3 * oneR) {
+                newSL   = +(trade.direction === "BUY" ? trade.entry + trade.risk         : trade.entry - trade.risk).toFixed(2);
+                newStep = 3;
+              } else if (step < 2 && unrealised >= 2 * oneR) {
+                newSL   = +(trade.direction === "BUY" ? trade.entry + (trade.risk * 0.5) : trade.entry - (trade.risk * 0.5)).toFixed(2);
+                newStep = 2;
+              } else if (step < 1 && unrealised >= oneR) {
+                newSL   = +(trade.direction === "BUY" ? trade.entry - (trade.risk * 0.3) : trade.entry + (trade.risk * 0.3)).toFixed(2);
+                newStep = 1;
+              }
+
+              const slNeedsMove = newSL !== null && (trade.direction === "BUY" ? newSL > trade.sl : newSL < trade.sl);
+              if (slNeedsMove) {
+                try {
+                  await modifyOrder(trade.slOrderId, newSL, trade.qty);
+                  trade.sl        = newSL;
+                  trade.trailStep = newStep;
+                  saveTrades();
+                  log(`🔒 LIVE Trail Step ${newStep}: ${trade.name} SL → ₹${newSL} (profit ≥ ${newStep}R, ₹${unrealised.toFixed(0)})`, "TRADE");
+                  notify(`🔒 Trail Step ${newStep} — ${trade.name}`, `SL → ₹${newSL}`);
+                } catch (e) {
+                  log(`⚠️ Trail modify failed ${trade.name}: ${e.message} — SL unchanged`, "WARN");
+                }
               }
             }
+          } catch (e) {
+            log(`⚠️ Trail LTP fetch failed ${trade.name}: ${e.message}`, "WARN");
           }
         }
       }
-
       if (trade.targetOrderId) {
         const s = await getOrderStatus(trade.targetOrderId);
         if (s?.status === "complete") {
@@ -682,7 +722,8 @@ async function execTrade(signal) {
     status:  "OPEN",
     pnl:     null,
     ltp:     null,
-    livePnl: 0,
+    livePnl:   0,
+    trailStep: 0,
   };
 
   // ── PAPER ──
