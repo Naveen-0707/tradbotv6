@@ -38,7 +38,7 @@ const {
   STOCKS,
 } = require("./strategies");
 
-const { isStale } = require("./indicators");
+const { isStale, calcATR } = require("./indicators");
 
 // ─── PATHS ────────────────────────────────────────────────────────────────────
 const DIR      = __dirname;
@@ -480,21 +480,9 @@ async function simulatePaperOCO() {
       const oneR = trade.risk * trade.qty;
       const step = trade.trailStep || 0;
 
-      // Fetch fresh LTP to avoid fake spike trigger
-      let freshLtp = ltp;
-      try {
-        const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
-        const stock = allStockList.find(x => x.name === trade.name);
-        if (stock) {
-          const freshData  = await fetchEquityLTP([stock.key]);
-          const freshEntry = Object.entries(freshData).find(([k]) => k.toUpperCase().includes(trade.name.toUpperCase()));
-          freshLtp = freshEntry?.[1]?.last_price || ltp;
-        }
-      } catch { /* non-fatal, fallback to ltp */ }
-
       const freshUnrealised = trade.direction === "BUY"
-        ? (freshLtp - trade.entry) * trade.qty
-        : (trade.entry - freshLtp) * trade.qty;
+        ? (ltp - trade.entry) * trade.qty
+        : (trade.entry - ltp) * trade.qty;
 
       if (step < 3 && freshUnrealised >= 3 * oneR) {
         // 3R profit → SL to entry + 1R (locking 1R profit)
@@ -898,7 +886,6 @@ async function scan(strategyNames) {
 
           // #15: news spike filter — reject if last candle range > 3× ATR
           if (candles.length >= 15) {
-            const { isStale, calcATR } = require("./indicators");
             const atrVals = calcATR(candles, 14);
             if (atrVals.length > 0) {
               const atr = atrVals[atrVals.length - 1];

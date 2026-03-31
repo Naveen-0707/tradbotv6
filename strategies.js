@@ -362,9 +362,10 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
 
   const atrVals = calcATR(tc, 14);
   const atr = atrVals.length > 0 ? atrVals[atrVals.length - 1] : la.c * 0.005;
+  const prevVwap = vwap(tc.slice(0, -1));
 
   // ── BUY: price crossed above VWAP ──
-  if (p1.c < vwapVal && la.c > vwapVal && vwap(tc.slice(0, -1)) < vwapVal) {
+  if (p1.c < prevVwap && la.c > vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
     // Target snaps to upper1 band if it's better than 2× risk, else fallback
     const target = upper1 > la.c + risk * 2 ? upper1 : la.c + risk * 2;
@@ -385,7 +386,7 @@ function vwapAnalyze(candles, name, trades, niftyDir) {
   }
 
   // ── SELL: price crossed below VWAP ──
-  if (p1.c > vwapVal && la.c < vwapVal && vwap(tc.slice(0, -1)) > vwapVal) {
+  if (p1.c > prevVwap && la.c < vwapVal) {
     const risk = Math.max(atr * 1.5, la.c * 0.003);
     // Target snaps to lower1 band if it's better than 2× risk, else fallback
     const target = lower1 < la.c - risk * 2 ? lower1 : la.c - risk * 2;
