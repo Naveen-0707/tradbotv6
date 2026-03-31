@@ -106,20 +106,25 @@ async function main() {
   console.log(DIM("  Paper mode = safe test with no real money"));
   console.log(DIM("  Live mode  = real NSE orders via HFT endpoint\n"));
 
-  const pmDefault = ex.paperMode !== false ? "y" : "n";
-  const pmInput   = (await ask(`  Paper mode? [${pmDefault.toUpperCase()}=default, y/n]: `)).trim().toLowerCase();
-  let paperMode = pmInput === "n" ? false : pmInput === "y" ? true : (ex.paperMode !== false);
+  const pmDefault  = ex.paperMode !== false ? "y" : "n";
+  const pmInput    = (await ask(`  Paper mode? [${pmDefault.toUpperCase()}=default, y/n]: `)).trim().toLowerCase();
+  const wantsLive  = pmInput === "n" || (pmInput !== "y" && ex.paperMode === false);
+  let paperMode    = true; // default-safe; only disable after explicit LIVE confirmation
 
-  if (!paperMode) {
+  if (wantsLive) {
     console.log();
     console.log(R("  ⚠️  WARNING: LIVE MODE PLACES REAL ORDERS WITH REAL MONEY"));
     console.log(R("  ⚠️  NSE requires a STATIC IP for algo trading (May 2025 regulation)"));
     console.log();
     const confirm = (await ask("  Type 'LIVE' to confirm real-money trading: ")).trim();
-    if (confirm !== "LIVE") {
+    if (confirm === "LIVE") {
+      paperMode = false;
+      console.log(R("  ⚠️  LIVE mode enabled."));
+    } else {
       console.log(Y("  → Falling back to PAPER mode for safety."));
-      paperMode = true; // keep safe fallback unless user explicitly confirms LIVE
     }
+  } else {
+    console.log(G("  ✓ Paper mode enabled."));
   }
 
   // ── 3. WALLET ──────────────────────────────────────────────────────────────
