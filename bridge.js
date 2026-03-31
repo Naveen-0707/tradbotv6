@@ -74,7 +74,7 @@ const json = (res, data, code = 200) => {
 
 // ─── IST DATE HELPERS ─────────────────────────────────────────────────────────
 function istNow() {
-  return new Date(Date.now() + 5.5 * 3600000);
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 }
 
 function istDateStr(d) {
