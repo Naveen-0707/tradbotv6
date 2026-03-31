@@ -108,7 +108,7 @@ async function main() {
 
   const pmDefault = ex.paperMode !== false ? "y" : "n";
   const pmInput   = (await ask(`  Paper mode? [${pmDefault.toUpperCase()}=default, y/n]: `)).trim().toLowerCase();
-  const paperMode = pmInput === "n" ? false : pmInput === "y" ? true : (ex.paperMode !== false);
+  let paperMode = pmInput === "n" ? false : pmInput === "y" ? true : (ex.paperMode !== false);
 
   if (!paperMode) {
     console.log();
@@ -118,7 +118,7 @@ async function main() {
     const confirm = (await ask("  Type 'LIVE' to confirm real-money trading: ")).trim();
     if (confirm !== "LIVE") {
       console.log(Y("  → Falling back to PAPER mode for safety."));
-      // paperMode stays true (keep safe)
+      paperMode = true; // keep safe fallback unless user explicitly confirms LIVE
     }
   }
 
