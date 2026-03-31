@@ -903,7 +903,7 @@ function FCBBotV6(){
                   await api.post("/api/settings",{paperMode:true});
                 }
                 setPaperMode(pm);
-              }} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#6f95b8",fontWeight:700}}>{m}</button>
+              }} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#2a4a6a",fontWeight:700}}>{m}</button>
             ))}
           </div>
           <button onClick={()=>{
@@ -917,7 +917,7 @@ function FCBBotV6(){
           }} style={{padding:"4px 8px",borderRadius:7,border:"1px solid rgba(120,170,255,0.25)",background:"rgba(120,170,255,0.08)",color:"#7fb1ff",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700}}>
             🔐 KEY
           </button>
-          <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#6f95b8",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+          <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#2a4a6a",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
             <span>⏰</span>{autoMode?"AUTO ON":"AUTO OFF"}
           </button>
           {botStopped&&<button onClick={()=>{setBotStopped(false);api.cmd("resume");}} style={{padding:"4px 9px",borderRadius:7,border:"1px solid rgba(0,230,118,0.3)",background:"rgba(0,230,118,0.1)",color:"#00e676",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>▶️ RESUME</button>}
