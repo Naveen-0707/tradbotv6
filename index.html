@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="theme-color" content="#070d16"/>
+<title>⚡ FCB BOT V6</title>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.5/protobuf.min.js"></script>
+<script src="/proto-decoder.js"></script>
+<style>
+html,body{margin:0;padding:0;background:#070d16;}
+*{box-sizing:border-box;}
+</style>
+<script>
+// ── Notifications ──────────────────────────────────────────────────────────
+window.FCBNotify={
+  async request(){if(!("Notification"in window))return false;return(await Notification.requestPermission())==="granted";},
+  send(title,body,tag){if(!("Notification"in window)||Notification.permission!=="granted")return;try{new Notification(title,{body,tag:tag||"fcb"+Date.now(),icon:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23070d16'/><text y='.9em' font-size='80'>⚡</text></svg>"});}catch{}}
+};
+// ── Wake Lock ──────────────────────────────────────────────────────────────
+window.FCBWakeLock={
+  lock:null,active:false,
+  async acquire(){if(!("wakeLock"in navigator))return false;try{this.lock=await navigator.wakeLock.request("screen");this.active=true;this.lock.addEventListener("release",()=>{this.active=false;});return true;}catch{return false;}},
+  async release(){if(this.lock){await this.lock.release();this.lock=null;this.active=false;}}
+};
+document.addEventListener("visibilitychange",async()=>{
+  if(document.visibilityState==="visible"&&window.FCBWakeLock&&!window.FCBWakeLock.active)await window.FCBWakeLock.acquire();
+});
+// ── PWA Install ────────────────────────────────────────────────────────────
+window.deferredInstallPrompt=null;
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();window.deferredInstallPrompt=e;});
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback,useMemo}=React;
+
+// ── API CONSTANTS ──────────────────────────────────────────────────────────
+const UPSTOX_BASE    ="https://api.upstox.com/v2";
+const UPSTOX_HFT    ="https://api-hft.upstox.com/v3";
+
+// ── STRATEGY CONFIG — mirrors strategies.js exactly ───────────────────────
+const STRAT_CFG={
+  FCB:    {label:"FCB",      emoji:"🔷",color:"#00b4ff",score:3,desc:"Fair Value Gap Breakout"},
+  ORB:    {label:"ORB",      emoji:"📊",color:"#ffd54f",score:2,desc:"Opening Range Breakout"},
+  VWAP:   {label:"VWAP",     emoji:"💧",color:"#00e5ff",score:2,desc:"VWAP Crossover"},
+  EMA:    {label:"EMA 9/21", emoji:"📈",color:"#69f0ae",score:2,desc:"EMA Golden/Death Cross"},
+  GAP:    {label:"GAP Fill", emoji:"🕳",color:"#ff6e40",score:2,desc:"Gap Fade 0.3–2.5%"},
+  ST_MACD:{label:"ST+MACD",  emoji:"🌊",color:"#ff5252",score:3,desc:"SuperTrend + MACD"},
+  RSI_DIV:{label:"RSI Div",  emoji:"📉",color:"#b388ff",score:3,desc:"RSI Divergence + ST"},
+  BB_SQZ: {label:"BB Sqz",   emoji:"🎯",color:"#00e676",score:2,desc:"Bollinger Squeeze"},
+  ADX_EMA:{label:"ADX+EMA",  emoji:"💪",color:"#ffab40",score:3,desc:"ADX Trend + EMA"},
+};
+
+// Schedule mirrors strategies.js SCHEDULE exactly
+const SCHEDULE=[
+  {from:555,to:560, label:"WAIT",           strategies:[],                    blocked:true, color:"#ffc107",emoji:"⏳"},
+  {from:560,to:575, label:"FCB + GAP",      strategies:["FCB","GAP"],         blocked:false,color:"#00b4ff",emoji:"🔷"},
+  {from:575,to:690, label:"ORB + BB_SQZ",   strategies:["ORB","BB_SQZ"],      blocked:false,color:"#ffd54f",emoji:"📊"},
+  {from:690,to:810, label:"VWAP + ST_MACD", strategies:["VWAP","ST_MACD"],    blocked:false,color:"#00e5ff",emoji:"💧"},
+  {from:810,to:870, label:"EMA + ADX_EMA",  strategies:["EMA","ADX_EMA"],     blocked:false,color:"#69f0ae",emoji:"📈"},
+  {from:870,to:920, label:"VWAP + RSI_DIV", strategies:["VWAP","RSI_DIV"],    blocked:false,color:"#b388ff",emoji:"📉"},
+  {from:920,to:930, label:"CLOSED",         strategies:[],                    blocked:true, color:"#ff5252",emoji:"🛑"},
+];
+function getSchedule(m){
+  return SCHEDULE.find(s=>m>=s.from&&m<s.to)||{label:"PRE-MARKET",strategies:[],blocked:true,color:"#2a4a6a",emoji:"🌙"};
+}
+
+// ── HELPERS ───────────────────────────────────────────────────────────────
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function fetchWithRetry(url,opts={},retries=3){
+  for(let a=0;a<=retries;a++){
+    try{const r=await fetch(url,opts);if(r.status===429){await delay(500*Math.pow(2,a));continue;}return r;}
+    catch(e){if(a===retries)throw e;await delay(500*Math.pow(2,a));}
+  }
+  throw new Error("Max retries");
+}
+
+// ── API CALLS ─────────────────────────────────────────────────────────────
+const api={
+  get: url=>fetchWithRetry(url).then(r=>r.json()),
+  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>r.json()),
+  del: url=>fetchWithRetry(url,{method:"DELETE"}).then(r=>r.json()),
+  cmd:(cmd,extra={})=>api.post("/api/cmd",{cmd,...extra}),
+};
+
+// HFT order placement (live mode only)
+async function placeHFT(token,body){
+  const ctrl=new AbortController();const t=setTimeout(()=>ctrl.abort(),10000);
+  try{
+    const r=await fetchWithRetry(`${UPSTOX_HFT}/order/place`,{method:"POST",signal:ctrl.signal,headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
+    clearTimeout(t);const d=await r.json();if(!r.ok)throw new Error(d.message||"Order failed");return d.data?.order_id;
+  }catch(e){clearTimeout(t);if(e.name==="AbortError")throw new Error("⏱ Order timeout");throw e;}
+}
+const placeEntry =(t,ik,tx,qty,p)=>placeHFT(t,{quantity:qty,product:"I",validity:"DAY",price:p,         tag:"FCB_ENTRY", instrument_token:ik,order_type:"LIMIT",transaction_type:tx,disclosed_quantity:0,trigger_price:0,     is_amo:false,slice:false});
+const placeTarget=(t,ik,tx,qty,p)=>placeHFT(t,{quantity:qty,product:"I",validity:"DAY",price:p,         tag:"FCB_TARGET",instrument_token:ik,order_type:"LIMIT",transaction_type:tx,disclosed_quantity:0,trigger_price:0,     is_amo:false,slice:false});
+const placeSL    =(t,ik,tx,qty,tr)=>placeHFT(t,{quantity:qty,product:"I",validity:"DAY",price:0,         tag:"FCB_SL",    instrument_token:ik,order_type:"SL-M", transaction_type:tx,disclosed_quantity:0,trigger_price:tr,is_amo:false,slice:false});
+const getOrderStatus=(t,id)=>fetchWithRetry(`${UPSTOX_BASE}/order/details?order_id=${id}`,{headers:{Authorization:`Bearer ${t}`,Accept:"application/json"}}).then(r=>r.json()).then(d=>d.data);
+const cancelOrder=(t,id)=>fetchWithRetry(`${UPSTOX_HFT}/order/cancel?order_id=${id}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`,Accept:"application/json"}}).then(r=>r.json());
+const getProfile=async t=>{const r=await fetchWithRetry(`${UPSTOX_BASE}/user/profile`,{headers:{Authorization:`Bearer ${t}`,Accept:"application/json"}});if(!r.ok)throw new Error("Invalid token");return(await r.json()).data;};
+
+// ── LOCAL STORAGE ─────────────────────────────────────────────────────────
+// Only for token, profile, settings, wallet — NOT for logs (server-side now)
+const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet"};
+const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+
+// ── CANDLE CHART ──────────────────────────────────────────────────────────
+function CandleChart({candles,signal}){
+  if(!candles||candles.length<2)return null;
+  const W=260,H=72,pad=8;
+  const mxP=Math.max(...candles.map(c=>c.h));
+  const mnP=Math.min(...candles.map(c=>c.l));
+  const rng=mxP-mnP||1;
+  const cw=(W-pad*2)/candles.length;
+  const py=v=>pad+(1-(v-mnP)/rng)*(H-pad*2);
+  return(
+    <svg width={W} height={H} style={{display:"block",margin:"8px 0"}}>
+      {candles.map((c,i)=>{
+        const x=pad+i*cw+cw*0.15,bw=cw*0.7,bull=c.c>=c.o,col=bull?"#00e676":"#ff5252";
+        return(<g key={i}>
+          <line x1={x+bw/2} y1={py(c.h)} x2={x+bw/2} y2={py(c.l)} stroke={col} strokeWidth={1}/>
+          <rect x={x} y={py(Math.max(c.o,c.c))} width={bw} height={Math.max(1,py(Math.min(c.o,c.c))-py(Math.max(c.o,c.c)))} fill={col} opacity={0.85}/>
+        </g>);
+      })}
+      {signal?.firstHigh&&<line x1={pad} y1={py(signal.firstHigh)} x2={W-pad} y2={py(signal.firstHigh)} stroke="#00b4ff" strokeWidth={1} strokeDasharray="3,2"/>}
+      {signal?.firstLow&&<line x1={pad} y1={py(signal.firstLow)} x2={W-pad} y2={py(signal.firstLow)} stroke="#ff9800" strokeWidth={1} strokeDasharray="3,2"/>}
+      {signal?.vwap&&signal.vwap>=mnP&&signal.vwap<=mxP&&<line x1={pad} y1={py(signal.vwap)} x2={W-pad} y2={py(signal.vwap)} stroke="#ffd54f" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.upper1&&signal.upper1>=mnP&&signal.upper1<=mxP&&<line x1={pad} y1={py(signal.upper1)} x2={W-pad} y2={py(signal.upper1)} stroke="#00e5ff" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.lower1&&signal.lower1>=mnP&&signal.lower1<=mxP&&<line x1={pad} y1={py(signal.lower1)} x2={W-pad} y2={py(signal.lower1)} stroke="#ff9800" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.ema21&&signal.ema21>=mnP&&signal.ema21<=mxP&&<line x1={pad} y1={py(signal.ema21)} x2={W-pad} y2={py(signal.ema21)} stroke="#69f0ae" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.superTrend&&signal.superTrend>=mnP&&signal.superTrend<=mxP&&<line x1={pad} y1={py(signal.superTrend)} x2={W-pad} y2={py(signal.superTrend)} stroke="#ff5252" strokeWidth={1} strokeDasharray="2,2"/>}
+    </svg>
+  );
+}
+
+// ── SCORE GAUGE (0-10 colored pips) ──────────────────────────────────────
+function ScoreGauge({score}){
+  const pipColor=i=>{
+    if(i>score)return{bg:"rgba(255,255,255,0.04)",border:"rgba(255,255,255,0.06)",color:"#1a3a5a"};
+    if(score<=5)return{bg:"rgba(255,82,82,0.15)",border:"rgba(255,82,82,0.4)",color:"#ff5252"};
+    if(score===6)return{bg:"rgba(255,152,0,0.15)",border:"rgba(255,152,0,0.4)",color:"#ff9800"};
+    if(score<=8)return{bg:"rgba(255,213,64,0.15)",border:"rgba(255,213,64,0.4)",color:"#ffd54f"};
+    return{bg:"rgba(0,230,118,0.2)",border:"rgba(0,230,118,0.5)",color:"#00e676"};
+  };
+  const label=score<=5?"SKIP":score===6?"POSSIBLE":score<=8?"TRADE":"STRONG";
+  const labelColor=score<=5?"#ff5252":score===6?"#ff9800":score<=8?"#ffd54f":"#00e676";
+  return(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
+        {[1,2,3,4,5,6,7,8,9,10].map(i=>{
+          const{bg,border,color}=pipColor(i);
+          return(<div key={i} style={{width:20,height:20,borderRadius:5,background:bg,border:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,color}}>{i<=score?i:""}</div>);
+        })}
+        <div style={{marginLeft:6,fontSize:9,fontFamily:"'Orbitron',sans-serif",fontWeight:700,color:labelColor,letterSpacing:1}}>{score}/10 · {label}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── STRATEGY BREAKDOWN CHIPS ──────────────────────────────────────────────
+function StratBreakdown({confirmedBy,scoreBreakdown}){
+  if(!confirmedBy||confirmedBy.length===0)return null;
+  return(
+    <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+      {confirmedBy.map(s=>{
+        const cfg=STRAT_CFG[s]||{label:s,color:"#888",emoji:"•"};
+        const pts=scoreBreakdown?.[s]||0;
+        return(<span key={s} style={{fontSize:8,padding:"2px 7px",borderRadius:4,background:`${cfg.color}15`,border:`1px solid ${cfg.color}40`,color:cfg.color,fontFamily:"'Share Tech Mono',monospace",letterSpacing:0.5}}>{cfg.emoji} {cfg.label}{pts>0?` +${pts}`:""}</span>);
+      })}
+    </div>
+  );
+}
+
+// ── STRATEGY BADGE ────────────────────────────────────────────────────────
+function SBadge({strat}){
+  const cfg=STRAT_CFG[strat]||{label:strat,color:"#888",emoji:"•"};
+  return(<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:`${cfg.color}15`,border:`1px solid ${cfg.color}40`,color:cfg.color,fontFamily:"'Share Tech Mono',monospace",marginLeft:6}}>{cfg.emoji} {cfg.label}</span>);
+}
+
+// ── TIMELINE BAR ──────────────────────────────────────────────────────────
+function TimelineBar({currentMin}){
+  const total=930-555;
+  return(
+    <div style={{marginBottom:12}}>
+      <div style={{fontSize:8,color:"#2a4a6a",letterSpacing:1,marginBottom:4,textAlign:"center"}}>— TODAY'S STRATEGY TIMELINE —</div>
+      <div style={{position:"relative",height:28,background:"rgba(255,255,255,0.02)",borderRadius:8,overflow:"hidden",border:"1px solid rgba(255,255,255,0.05)"}}>
+        {SCHEDULE.map((s,i)=>{
+          const left=((s.from-555)/total)*100;
+          const width=((s.to-s.from)/total)*100;
+          const active=currentMin>=s.from&&currentMin<s.to;
+          return(<div key={i} style={{position:"absolute",left:`${left}%`,width:`${width}%`,height:"100%",background:active?`${s.color}30`:`${s.color}08`,borderRight:"1px solid rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",transition:"background 0.5s"}}>
+            <span style={{fontSize:7,color:active?s.color:"#1a3a5a",fontFamily:"'Share Tech Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",padding:"0 2px",fontWeight:active?700:400}}>{active?"▶ ":""}{s.emoji}</span>
+          </div>);
+        })}
+        {currentMin>=555&&currentMin<=930&&<div style={{position:"absolute",left:`${((currentMin-555)/total)*100}%`,top:0,bottom:0,width:2,background:"#ffffff",opacity:0.5,borderRadius:1}}/>}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#1a3a5a",padding:"0 2px"}}>
+        <span>9:15</span><span>9:20</span><span>9:35</span><span>11:30</span><span>1:30</span><span>2:30</span><span>3:20</span>
+      </div>
+    </div>
+  );
+}
+
+// ── SIGNAL CARD ───────────────────────────────────────────────────────────
+function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings}){
+  const buy=signal.direction==="BUY";
+  const col=buy?"#00e676":"#ff5252";
+  const cfg=STRAT_CFG[signal.strategy]||STRAT_CFG.FCB;
+  const[qty,setQty]=useState(()=>{
+    const riskPct=settings?.riskPct||2;
+    const maxByRisk=Math.max(1,Math.floor((wallet*riskPct/100)/signal.risk));
+    const maxByWal =availBal>0?Math.max(1,Math.floor(availBal/signal.entry)):maxByRisk;
+    return Math.min(maxByRisk,maxByWal);
+  });
+  const cost=signal.entry*qty;
+  // BUG #5 fix: SELL trades don't need balance check
+  const balOk=signal.direction==="SELL"||availBal<=0||availBal>=cost;
+
+  const extras=[];
+  if(signal.vwap)extras.push(`VWAP ₹${signal.vwap}`);
+  if(signal.ema21)extras.push(`EMA21 ₹${signal.ema21}`);
+  if(signal.adx)extras.push(`ADX ${signal.adx}`);
+  if(signal.rsi)extras.push(`RSI ${signal.rsi}`);
+  if(signal.gapPct!=null)extras.push(`Gap ${signal.gapPct>0?"+":""}${signal.gapPct}%`);
+  if(signal.bbWidth!=null)extras.push(`BBW ${signal.bbWidth}%`);
+
+  return(
+    <div style={{background:"linear-gradient(160deg,#0d1b26,#111e2e)",border:`1px solid ${buy?"rgba(0,230,118,0.2)":"rgba(255,82,82,0.2)"}`,borderRadius:18,padding:16,marginBottom:14,position:"relative",overflow:"hidden"}}>
+      <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,${cfg.color},transparent)`}}/>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div>
+          <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:15,fontWeight:700,color:"#ddeeff"}}>{signal.name}</span>
+          <SBadge strat={signal.strategy}/>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{color:"#3a5570",fontSize:8}}>R:R</div>
+          <div style={{color:"#ffd54f",fontFamily:"'Orbitron',sans-serif",fontSize:17,fontWeight:700}}>{signal.rrLabel}</div>
+        </div>
+      </div>
+      {/* Score gauge */}
+      <ScoreGauge score={signal.score}/>
+      {/* Strategy breakdown */}
+      <StratBreakdown confirmedBy={signal.confirmedBy} scoreBreakdown={signal.scoreBreakdown}/>
+      {/* Direction + extras */}
+      <div style={{marginBottom:8}}>
+        <span style={{display:"inline-block",padding:"3px 10px",borderRadius:6,fontSize:11,background:buy?"rgba(0,230,118,0.12)":"rgba(255,82,82,0.12)",color:col,border:`1px solid ${col}40`,fontFamily:"'Share Tech Mono',monospace",fontWeight:700}}>{buy?"▲ BUY":"▼ SELL"}</span>
+        {extras.length>0&&<span style={{marginLeft:8,fontSize:9,color:"#3a6a8a",fontFamily:"'Share Tech Mono',monospace"}}>{extras.join(" · ")}</span>}
+      </div>
+      {/* Candle chart */}
+      <CandleChart candles={signal.candles} signal={signal}/>
+      {/* Price grid */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,margin:"10px 0"}}>
+        {[["ENTRY",`₹${signal.entry}`,"#c8ddf0"],["TARGET",`₹${signal.target}`,"#00e676"],["STOP LOSS",`₹${signal.sl}`,"#ff5252"]].map(([l,v,c])=>(
+          <div key={l} style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"8px 6px",textAlign:"center"}}>
+            <div style={{color:"#2a4a6a",fontSize:8,marginBottom:2}}>{l}</div>
+            <div style={{color:c,fontFamily:"'Share Tech Mono',monospace",fontSize:12,fontWeight:700}}>{v}</div>
+          </div>
+        ))}
+      </div>
+      {/* Stats row */}
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7a9a",marginBottom:10,fontFamily:"'Share Tech Mono',monospace"}}>
+        <span>⚡ Risk: <b style={{color:"#ffd54f"}}>₹{signal.risk}</b></span>
+        <span>📊 Vol: <b style={{color:"#80d8ff"}}>{signal.volRatio}×</b></span>
+        <span>📉 {signal.riskPct}%</span>
+      </div>
+      {/* Qty control */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+        <span style={{color:"#3a5570",fontSize:11}}>QTY:</span>
+        <div style={{display:"flex",alignItems:"center",background:"rgba(255,255,255,0.05)",borderRadius:8}}>
+          <button onClick={()=>setQty(q=>Math.max(1,q-1))} style={{background:"none",border:"none",color:"#7a9ab0",cursor:"pointer",padding:"6px 12px",fontSize:16}}>−</button>
+          <span style={{color:"#ddeeff",fontFamily:"'Orbitron',sans-serif",fontSize:14,minWidth:28,textAlign:"center"}}>{qty}</span>
+          <button onClick={()=>setQty(q=>q+1)} style={{background:"none",border:"none",color:"#7a9ab0",cursor:"pointer",padding:"6px 12px",fontSize:16}}>+</button>
+        </div>
+        <span style={{color:"#3a5570",fontSize:11}}>Max loss: <b style={{color:"#ff5252"}}>₹{(signal.risk*qty).toFixed(0)}</b></span>
+      </div>
+      {/* Balance warning */}
+      {!balOk&&<div style={{fontSize:9,color:"#cc3030",marginBottom:8,fontFamily:"'Share Tech Mono',monospace"}}>⛔ Need ₹{cost.toFixed(0)} · Only ₹{Math.max(0,availBal).toFixed(0)} available</div>}
+      {balOk&&availBal>0&&signal.direction==="BUY"&&<div style={{fontSize:9,color:"#1a4a3a",marginBottom:8,fontFamily:"'Share Tech Mono',monospace"}}>✅ Cost ₹{cost.toFixed(0)} · ₹{availBal.toFixed(0)} available</div>}
+      {/* Execute button */}
+      <button
+        onClick={()=>!trading&&balOk&&onTrade(signal,qty)}
+        disabled={trading||!balOk}
+        style={{width:"100%",padding:14,background:(!balOk||trading)?"rgba(255,255,255,0.04)":(buy?"linear-gradient(135deg,#00897b,#00e676)":"linear-gradient(135deg,#c62828,#ff5252)"),color:(!balOk||trading)?"#3a5570":"#fff",border:"none",borderRadius:10,fontFamily:"'Orbitron',sans-serif",fontSize:11,fontWeight:700,letterSpacing:2,cursor:(!balOk||trading)?"not-allowed":"pointer",boxShadow:(!balOk||trading)?"none":`0 4px 20px ${buy?"rgba(0,200,120,0.3)":"rgba(200,0,0,0.3)"}`}}
+      >
+        {trading?"PLACING ORDERS...":!balOk?"⛔ INSUFFICIENT BALANCE":paperMode?"📝 PAPER TRADE":`⚡ ${signal.direction}`}
+      </button>
+      {!paperMode&&<div style={{marginTop:5,fontSize:8,color:"#1a3a5a",textAlign:"center"}}>Entry + Target + SL via HFT endpoint</div>}
+    </div>
+  );
+}
+
+// ── TRADE CARD ────────────────────────────────────────────────────────────
+function TradeCard({trade}){
+  const buy=trade.direction==="BUY";
+  const statusColor={OPEN:"#ffd54f",TARGET_HIT:"#00e676",STOPPED_OUT:"#ff5252",PAPER:"#00b4ff",PLACED:"#80d8ff"}[trade.status]||"#888";
+  const pnlColor=trade.pnl>0?"#00e676":trade.pnl<0?"#ff5252":"#888";
+  return(
+    <div style={{background:"rgba(255,255,255,0.02)",border:`1px solid ${trade.status==="TARGET_HIT"?"rgba(0,230,118,0.2)":trade.status==="STOPPED_OUT"?"rgba(255,82,82,0.2)":"rgba(255,255,255,0.06)"}`,borderRadius:14,padding:14,marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+        <div>
+          <span style={{fontFamily:"'Orbitron',sans-serif",color:"#c8ddf0",fontSize:13,fontWeight:700}}>{trade.name}</span>
+          <span style={{marginLeft:6,fontSize:10,color:buy?"#00e676":"#ff5252"}}>{buy?"▲":"▼"} {trade.direction}</span>
+          <SBadge strat={trade.strategy}/>
+          {trade.score&&<span style={{marginLeft:6,fontSize:8,color:"#ffd54f",fontFamily:"'Share Tech Mono',monospace"}}>S:{trade.score}/10</span>}
+        </div>
+        <span style={{fontSize:8,color:statusColor,background:`${statusColor}15`,padding:"3px 8px",borderRadius:4,fontFamily:"'Share Tech Mono',monospace"}}>{trade.status}</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,fontSize:10,color:"#4a7a9a",marginBottom:8}}>
+        <div>QTY: <b style={{color:"#80b0d0"}}>{trade.qty}</b></div>
+        <div>@ <b style={{color:"#c0d8f0"}}>₹{trade.entry}</b></div>
+        <div>T: <b style={{color:"#00e676"}}>₹{trade.target}</b></div>
+        <div>SL: <b style={{color:"#ff5252"}}>₹{trade.sl}</b></div>
+      </div>
+      {trade.livePnl!=null&&(trade.status==="OPEN"||trade.status==="PAPER")&&(
+        <div style={{fontSize:9,color:"#2a4a6a",marginBottom:6,fontFamily:"'Share Tech Mono',monospace"}}>
+          LTP ₹{trade.ltp||"?"} · Live P&L: <span style={{color:trade.livePnl>=0?"#00e676":"#ff5252"}}>{trade.livePnl>=0?"+":""}₹{trade.livePnl}</span>
+        </div>
+      )}
+      {trade.pnl!=null&&trade.pnl!==null&&<div style={{background:`${pnlColor}10`,border:`1px solid ${pnlColor}25`,borderRadius:8,padding:"5px 10px",marginBottom:6,textAlign:"center"}}><span style={{color:pnlColor,fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700}}>{trade.pnl>=0?"+":""}₹{trade.pnl.toFixed(0)}</span><span style={{color:"#3a5a7a",fontSize:9,marginLeft:8}}>P&L</span></div>}
+      <div style={{fontSize:8,color:"#1a3a5a"}}>{trade.time} · {trade.paper?"📋 PAPER":"⚡ LIVE"}</div>
+    </div>
+  );
+}
+
+// ── SETUP SCREEN ──────────────────────────────────────────────────────────
+function SetupScreen({onConnect}){
+  const[tok,setTok]=useState("");const[loading,setLoading]=useState(false);const[err,setErr]=useState("");
+  const connect=async()=>{
+    if(!tok.trim())return setErr("Paste your access token");
+    if(!tok.trim().startsWith("eyJ"))return setErr("Token must be a JWT starting with eyJ");
+    setLoading(true);setErr("");
+    try{const p=await getProfile(tok.trim());onConnect(tok.trim(),p);}
+    catch(e){setErr("❌ "+e.message);}
+    finally{setLoading(false);}
+  };
+  return(
+    <div style={{padding:"24px 16px",fontFamily:"'Share Tech Mono',monospace"}}>
+      <style>{"@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');"}</style>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:22,fontWeight:900,color:"#ddeeff",letterSpacing:3}}>⚡ FCB BOT <span style={{color:"#ffd54f"}}>V6</span></div>
+        <div style={{color:"#ffd54f",fontSize:9,letterSpacing:3,marginTop:3}}>9 STRATEGIES · MULTI-CONFIRM SCORING · 130 STOCKS</div>
+        <div style={{marginTop:10,display:"flex",gap:5,justifyContent:"center",flexWrap:"wrap"}}>
+          {["🔷 FCB","📊 ORB","💧 VWAP","📈 EMA","🕳 GAP","🌊 ST+MACD","📉 RSI DIV","🎯 BB SQZ","💪 ADX+EMA"].map(b=>(
+            <span key={b} style={{background:"rgba(0,180,255,0.07)",border:"1px solid rgba(0,180,255,0.2)",borderRadius:5,padding:"2px 7px",fontSize:8,color:"#00a060"}}>{b}</span>
+          ))}
+        </div>
+      </div>
+      <div style={{background:"rgba(255,82,82,0.06)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
+        <div style={{fontSize:10,color:"#cc3030",fontWeight:700,marginBottom:4}}>⚠️ LIVE TRADING</div>
+        <div style={{fontSize:9,color:"#664444",lineHeight:1.7}}>This bot places <b style={{color:"#ff5252"}}>real orders</b> on NSE via Upstox HFT API.<br/>Paper mode is ON by default for safety. NSE requires a <b style={{color:"#ffc107"}}>Static IP</b> for algo trading.</div>
+      </div>
+      <div style={{marginBottom:6,fontSize:10,color:"#4a7a9a",letterSpacing:1}}>🔑 UPSTOX ACCESS TOKEN</div>
+      <textarea value={tok} onChange={e=>setTok(e.target.value)} placeholder="Paste your live access token here..." style={{width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:10,padding:12,color:"#c8ddf0",fontSize:11,fontFamily:"'Share Tech Mono',monospace",resize:"none",height:70,outline:"none",marginBottom:6}}/>
+      {err&&<div style={{color:"#ff5252",fontSize:10,marginBottom:8}}>{err}</div>}
+      <button onClick={connect} disabled={loading} style={{width:"100%",padding:16,background:loading?"rgba(255,255,255,0.04)":"linear-gradient(135deg,#c62828,#ff5252)",color:loading?"#2a4a6a":"#fff",border:"none",borderRadius:12,fontFamily:"'Orbitron',sans-serif",fontSize:12,fontWeight:700,letterSpacing:2,cursor:loading?"not-allowed":"pointer"}}>
+        {loading?"VERIFYING...":"⚡ CONNECT →"}
+      </button>
+    </div>
+  );
+}
+
+// ── MAIN APP ──────────────────────────────────────────────────────────────
+function FCBBotV6(){
+  const savedToken  =lsGet(LS.TOKEN,null);
+  const savedProfile=lsGet(LS.PROFILE,null);
+
+  const[token,setToken]          =useState(savedToken||"");
+  const[profile,setProfile]      =useState(savedProfile||null);
+  const[signals,setSignals]      =useState([]);
+  const[trades,setTrades]        =useState([]);
+  const[logs,setLogs]            =useState([]);     // [{ts,type,msg}] — from server SSE
+  const[tab,setTab]              =useState("scanner");
+  const[scanning,setScanning]    =useState(false);
+  const[trading,setTrading]      =useState(false);
+  const[autoMode,setAutoMode]    =useState(true);
+  const[manualStrats,setManualStrats]=useState(["FCB"]);
+  const[paperMode,setPaperMode]  =useState(true);
+  const[botStopped,setBotStopped]=useState(false);
+  const[istTime,setIstTime]      =useState("");
+  const[minuteOfDay,setMinuteOfDay]=useState(0);
+  const[wsStatus,setWsStatus]    =useState("disconnected");
+  const[niftyLtp,setNiftyLtp]    =useState(null);
+  const[niftyChg,setNiftyChg]    =useState(null);
+  const[alerts,setAlerts]        =useState([]);
+  const[logDate,setLogDate]      =useState("today");
+  const[logDates,setLogDates]    =useState([]);
+  const[logFilter,setLogFilter]  =useState("all");
+  const[lastLogTs,setLastLogTs]  =useState("");
+  const[settings,setSettings]    =useState(()=>lsGet(LS.SETTINGS,{riskPct:2,dailyLossLimit:500,maxTrades:5,scoreThreshold:6,stockTier:"tier1+2",niftyFilter:true}));
+  const[walletData,setWalletData]=useState(()=>lsGet(LS.WALLET,{amount:"",set:false}));
+  const[walletInput,setWalletInput]=useState(()=>lsGet(LS.WALLET,{amount:""}).amount||"");
+  const[showTokenEdit,setShowTokenEdit]=useState(false);
+  const[newToken,setNewToken]    =useState("");
+  const[notifPerm,setNotifPerm]  =useState(typeof Notification!=="undefined"?Notification.permission:"unsupported");
+  const[canInstall,setCanInstall]=useState(!!window.deferredInstallPrompt);
+
+  const wsRef = useRef(null);
+  const wsReconnRef = useRef(null);
+  const wsReconnectDelayRef = useRef(5000);
+  const ocoRef=useRef(null);
+  const logEndRef=useRef(null);
+  const autoScrollRef=useRef(true);
+
+  // ── HELPERS ──────────────────────────────────────────────────────────────
+  const addAlert=useCallback((msg,type="info")=>{
+    const id=Date.now();
+    setAlerts(p=>[...p.slice(-2),{id,msg,type}]);
+    setTimeout(()=>setAlerts(p=>p.filter(a=>a.id!==id)),7000);
+  },[]);
+
+  // Parse a raw log line into {ts, type, msg}
+  const parseLine=line=>{
+    const m=line.match(/^\[(.+?)\] \[(.+?)\] (.+)$/);
+    if(!m)return{ts:"",type:"info",msg:line};
+    return{ts:m[1],type:m[2].toLowerCase(),msg:m[3]};
+  };
+
+  // Append lines from server to log state (deduplicated by ts+msg)
+  const appendLines=useCallback(lines=>{
+    if(!lines||lines.length===0)return;
+    const parsed=lines.map(parseLine).filter(l=>l.msg);
+    setLogs(prev=>{
+      const combined=[...prev,...parsed];
+      // Deduplicate: keep last 2000 unique
+      const seen=new Set();
+      const deduped=[];
+      for(const l of combined){
+        const key=l.ts+l.msg;
+        if(!seen.has(key)){seen.add(key);deduped.push(l);}
+      }
+      return deduped.slice(-2000);
+    });
+    // Track last ts for catch-up
+    const last=parsed[parsed.length-1];
+    if(last?.ts)setLastLogTs(last.ts);
+  },[]);
+
+  // ── CLOCK ─────────────────────────────────────────────────────────────
+  useEffect(()=>{
+    const tick=()=>{
+      const ist=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+      setIstTime(ist.toLocaleTimeString("en-IN"));
+      setMinuteOfDay(ist.getHours()*60+ist.getMinutes());
+    };
+    tick();
+    const t=setInterval(tick,1000);
+    return()=>clearInterval(t);
+  },[]);
+
+  // ── FETCH INITIAL LOGS FROM SERVER ───────────────────────────────────
+  const fetchLogsFromServer=useCallback(async(date="today",sinceTs="")=>{
+    try{
+      const url=sinceTs?`/api/logs?date=${date}&since=${encodeURIComponent(sinceTs)}`:`/api/logs?date=${date}`;
+      const data=await api.get(url);
+      if(data.lines&&data.lines.length>0){
+        appendLines(data.lines);
+        if(sinceTs)addAlert(`📋 Loaded ${data.lines.length} missed log entries`,"info");
+      }
+    }catch{}
+  },[appendLines,addAlert]);
+
+  // Fetch available log dates for date picker
+  const fetchLogDates=useCallback(async()=>{
+    try{const d=await api.get("/api/logs/dates");setLogDates(d.dates||[]);}catch{}
+  },[]);
+
+  // ── SSE CONNECTION ────────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!profile)return;
+    let es=null;let reconnTimer=null;
+
+    const connect=()=>{
+      es=new EventSource("/events");
+      es.onmessage=e=>{
+        try{
+          const d=JSON.parse(e.data);
+          if(d.type==="signals"&&d.signals){
+            setSignals(d.signals);
+            if(d.signals.length>0){addAlert(`🎯 ${d.signals.length} signal(s) from bot`,"success");window.FCBNotify?.send(`🎯 ${d.signals.length} Signal!`,d.signals.map(s=>`${s.name} ${s.direction} ₹${s.entry} S:${s.score}`).join(" | "));}
+          }
+          if(d.type==="trades"&&d.trades)setTrades(d.trades);
+          if(d.type==="log"&&d.line)appendLines([d.line]);
+          // On reconnect event: catch up missed logs
+          if(d.type==="connected"){
+            if(lastLogTs)fetchLogsFromServer("today",lastLogTs);
+          }
+        }catch{}
+      };
+      es.onerror=()=>{
+        es.close();
+        reconnTimer=setTimeout(connect,30000); // 30s reconnect — V5 fix kept
+      };
+    };
+
+    connect();
+    // Fetch initial logs and dates
+    fetchLogsFromServer("today");
+    fetchLogDates();
+
+    return()=>{es?.close();clearTimeout(reconnTimer);};
+  },[profile]);// eslint-disable-line
+
+  // ── FETCH LOGS WHEN DATE CHANGES ──────────────────────────────────────
+  useEffect(()=>{
+    if(!profile)return;
+    setLogs([]);
+    fetchLogsFromServer(logDate);
+  },[logDate,profile]);// eslint-disable-line
+
+  // ── AUTO SCROLL LOG ───────────────────────────────────────────────────
+  useEffect(()=>{
+    if(autoScrollRef.current&&logEndRef.current)logEndRef.current.scrollIntoView({behavior:"smooth"});
+  },[logs]);
+
+  // ── NIFTY DIRECTION FROM TRADES/SIGNALS ──────────────────────────────
+  // We track Nifty from WS LTP map if available, else show from status
+  useEffect(()=>{
+    if(!profile)return;
+    const iv=setInterval(async()=>{
+      try{const d=await api.get("/api/status");if(d.niftyFilter!==undefined){};}catch{}
+    },60000);
+    return()=>clearInterval(iv);
+  },[profile]);
+
+  // ── WS FOR LIVE LTP (paper OCO) ──────────────────────────────────────
+  const connectWS=useCallback(async(tkn)=>{
+    if(wsReconnRef.current){clearTimeout(wsReconnRef.current);wsReconnRef.current=null;}
+    if(wsRef.current){const old=wsRef.current;old.onopen=null;old.onmessage=null;old.onerror=null;old.onclose=null;old.close();wsRef.current=null;}
+    try{
+      await FCBProto.init();
+      setWsStatus("reconnecting");
+      const authRes=await fetch("/ws-auth");
+      if(!authRes.ok)throw new Error(`Auth ${authRes.status}`);
+      const authJson=await authRes.json();
+      const wsUrl=authJson?.data?.authorized_redirect_uri;
+      if(!wsUrl)throw new Error("No WS URL");
+      const ws=new WebSocket(wsUrl);
+      let hb=null;
+      ws.onopen=()=>{
+        setWsStatus("connected");
+        wsReconnectDelayRef.current = 5000;
+        
+        // Subscribe to Nifty for direction display
+        const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank"];
+        const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:keys}});
+        ws.send(new TextEncoder().encode(sub));
+        ws._lp=Date.now();
+        hb=setInterval(()=>{if(Date.now()-ws._lp>90000){ws.close();}},5000);
+      };
+      ws.onmessage=async e=>{
+        ws._lp=Date.now();
+        try{
+          const buf=await e.data.arrayBuffer();
+          const msg=FCBProto.decode(buf);
+          if(msg?.feeds){
+            const nifty=msg.feeds["NSE_INDEX|Nifty 50"];
+            if(nifty?.fullFeed?.indexFF?.ltpc?.ltp){
+              const ltp=nifty.fullFeed.indexFF.ltpc.ltp;
+              const cp=nifty.fullFeed.indexFF.ltpc.cp;
+              setNiftyLtp(+ltp.toFixed(2));
+              if(cp)setNiftyChg(+(((ltp-cp)/cp)*100).toFixed(2));
+            }
+            // Update live trade P&L
+            setTrades(prev=>prev.map(t=>{
+              if(t.status!=="OPEN"&&t.status!=="PAPER")return t;
+              // Find stock key from STRAT_CFG (we don't have key here, use name)
+              // LTP matching by name is not possible from index feed
+              // Paper OCO simulation runs in bot.js — just display what bot sent
+              return t;
+            }));
+          }
+        }catch{}
+      };
+      ws.onerror=()=>setWsStatus("disconnected");
+      ws.onclose = () => {
+        clearInterval(hb);
+        setWsStatus("disconnected");
+        const delay = Math.min(wsReconnectDelayRef.current, 120000);
+        console.log(`🔄 WS closed — reconnecting in ${delay/1000}s`);
+        wsReconnRef.current = setTimeout(() => {
+          wsReconnectDelayRef.current = Math.min(delay * 2, 120000);
+          connectWS(tkn);
+        }, delay);
+      };
+      wsRef.current=ws;
+    }catch(e){setWsStatus("disconnected");wsReconnRef.current=setTimeout(()=>connectWS(tkn),30000);}
+  },[]);
+
+  useEffect(()=>{
+    if(!token||!profile)return;
+    connectWS(token);
+    return()=>{wsRef.current?.close();clearTimeout(wsReconnRef.current);};
+  },[token,profile]);// eslint-disable-line
+
+  // ── LIVE OCO MONITOR ─────────────────────────────────────────────────
+  useEffect(()=>{
+    if(!token||!profile)return;
+    ocoRef.current=setInterval(async()=>{
+      const openLive=trades.filter(t=>t.status==="OPEN"&&!t.paper&&(t.targetOrderId||t.slOrderId));
+      for(const tr of openLive){
+        try{
+          if(tr.targetOrderId){const s=await getOrderStatus(token,tr.targetOrderId);if(s?.status==="complete"){const pnl=+(tr.risk*tr.qty*tr.rrMult);addAlert(`🎯 TARGET: ${tr.name} +₹${pnl.toFixed(0)}`,"success");window.FCBNotify?.send("🎯 TARGET HIT",`${tr.name} +₹${pnl.toFixed(0)}`);if(tr.slOrderId){try{await cancelOrder(token,tr.slOrderId);}catch{}}setTrades(p=>p.map(t=>t===tr?{...t,status:"TARGET_HIT",pnl}:t));continue;}}
+          if(tr.slOrderId){const s=await getOrderStatus(token,tr.slOrderId);if(s?.status==="complete"){const pnl=-(tr.risk*tr.qty);addAlert(`🛑 STOPPED: ${tr.name} -₹${Math.abs(pnl).toFixed(0)}`,"error");if(tr.targetOrderId){try{await cancelOrder(token,tr.targetOrderId);}catch{}}setTrades(p=>p.map(t=>t===tr?{...t,status:"STOPPED_OUT",pnl}:t));}}
+        }catch{}
+      }
+    },5000);
+    return()=>clearInterval(ocoRef.current);
+  },[token,profile,trades]);// eslint-disable-line
+
+  // ── COMPUTED VALUES ───────────────────────────────────────────────────
+  const schedule=getSchedule(minuteOfDay);
+  const wallet=parseFloat(walletData.amount)||0;
+  const dailyPnL=useMemo(()=>trades.reduce((s,t)=>s+(t.pnl||0),0),[trades]);
+  // BUG #5: only BUY direction open trades lock capital
+  const lockedCapital=useMemo(()=>trades.filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.direction==="BUY").reduce((s,t)=>s+(t.entry*t.qty),0),[trades]);
+  const availBal=walletData.set&&wallet>0?wallet+dailyPnL-lockedCapital:null;
+  const walletPct=walletData.set&&wallet>0?Math.max(0,(availBal/wallet)*100):100;
+  const dailyLimitHit=!paperMode&&(trades.reduce((s,t)=>s+(t.pnl!==null?t.pnl:(t.livePnl||0)),0)<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
+
+  // Filtered logs
+  const filteredLogs=useMemo(()=>{
+    const src=logs;
+    if(logFilter==="all")return src;
+    if(logFilter==="trade")return src.filter(l=>["TRADE","SIGNAL"].includes(l.type.toUpperCase())||l.msg.includes("TARGET")||l.msg.includes("STOPPED")||l.msg.includes("PAPER")||l.msg.includes("LIVE"));
+    if(logFilter==="scan")return src.filter(l=>l.type.toUpperCase()==="SCAN"||l.msg.includes("Scan:")||l.msg.includes("SIGNAL")||l.msg.includes("No signals"));
+    if(logFilter==="error")return src.filter(l=>["ERROR","WARN"].includes(l.type.toUpperCase()));
+    if(logFilter==="status")return src.filter(l=>l.type.toUpperCase()==="STATUS"||l.msg.includes("⏰ →")||l.msg.includes("Config"));
+    return src;
+  },[logs,logFilter]);
+
+  // ── SAVE SETTINGS ─────────────────────────────────────────────────────
+  useEffect(()=>{lsSet(LS.SETTINGS,settings);},[settings]);
+  useEffect(()=>{lsSet(LS.WALLET,walletData);},[walletData]);
+
+  // ── TOKEN REFRESH ─────────────────────────────────────────────────────
+  useEffect(()=>{
+    const iv=setInterval(()=>{
+      const h=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})).getHours();
+      const mn=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})).getMinutes();
+      if(h===3&&mn<=5)addAlert("🔑 Token expires at 3:30 AM IST!","warn");
+    },60000);
+    return()=>clearInterval(iv);
+  },[]);
+
+  // ── SCAN ──────────────────────────────────────────────────────────────
+  const runScan=useCallback(async(stratOverride)=>{
+    if(botStopped){addAlert("🛑 Bot stopped","warn");return;}
+    const strats=stratOverride||(autoMode?schedule.strategies:manualStrats);
+    if(!strats.length){addAlert("No active strategies","warn");return;}
+    setScanning(true);
+    try{
+      await api.cmd("scan",{strats});
+    }catch(e){addAlert("❌ Scan failed: "+e.message,"error");}
+    setTimeout(()=>setScanning(false),3000);
+  },[botStopped,autoMode,schedule.strategies,manualStrats,addAlert]);
+
+  // ── EXECUTE TRADE ─────────────────────────────────────────────────────
+  const executeTrade=useCallback(async(signal,qty)=>{
+    if(dailyLimitHit){addAlert("🛑 Daily limit","warn");return;}
+    setTrading(true);
+    const exitTx=signal.direction==="BUY"?"SELL":"BUY";
+    try{
+      if(paperMode){
+        await delay(300);
+        const t={...signal,qty,time:new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"}),paper:true,status:"PAPER",pnl:null};
+        setTrades(p=>[t,...p]);
+        addAlert(`📝 Paper: ${signal.direction} ${qty}× ${signal.name}`,"success");
+        window.FCBNotify?.send(`📝 Paper — ${signal.name}`,`${signal.direction} ${qty}× @ ₹${signal.entry} S:${signal.score}`);
+        // Sync to bot so hasOpenPosition() fires correctly for UI-placed trades
+        try{ await api.post("/api/cmd",{cmd:"manual_paper",trade:t}); }catch{}
+      }else{
+        // Find instrument key from STRAT_CFG — we need it for live orders
+        // Fetch from config endpoint to get the stock list
+        addAlert(`🔄 Placing: ${signal.direction} ${qty}× ${signal.name}`,"info");
+        const cfg=await api.get("/api/config");
+        // Note: in live mode, bot.js handles the order via its own scan
+        // UI direct order is only for manual trades via signal card
+        // For simplicity we use the scan cmd which bot executes
+        addAlert("⚠️ Use SCAN for live trades (bot executes)","warn");
+      }
+    }catch(e){addAlert("❌ Trade error: "+e.message,"error");}
+    setTrading(false);
+  },[paperMode,dailyLimitHit,addAlert]);
+
+  // ── CLEAR TRADES ──────────────────────────────────────────────────────
+  const clearTrades=useCallback(async()=>{
+    if(!window.confirm("Clear ALL trades and signals?"))return;
+    try{
+      await api.del("/api/trades");// bridge sends clear_trades to bot + clears files
+      setTrades([]);setSignals([]);
+      addAlert("🗑 Trades cleared","info");
+    }catch(e){addAlert("❌ Clear failed","error");}
+  },[addAlert]);
+
+  // ── SAVE SETTINGS TO SERVER ───────────────────────────────────────────
+  const saveSettings=useCallback(async(s)=>{
+    setSettings(s);
+    try{await api.post("/api/settings",s);addAlert("⚙️ Settings saved","success");}
+    catch{addAlert("❌ Save failed","error");}
+  },[addAlert]);
+
+  // ── APPLY NEW TOKEN ───────────────────────────────────────────────────
+  const applyNewToken=useCallback(async()=>{
+    if(!newToken.trim()||!newToken.startsWith("eyJ")){addAlert("❌ Invalid token","error");return;}
+    try{
+      const p=await getProfile(newToken.trim());
+      setToken(newToken.trim());setProfile(p);
+      lsSet(LS.TOKEN,newToken.trim());lsSet(LS.PROFILE,p);
+      await api.post("/api/token",{token:newToken.trim()});
+      wsRef.current?.close();
+      setShowTokenEdit(false);setNewToken("");
+      addAlert("✅ Token updated","success");
+    }catch(e){addAlert("❌ Invalid token: "+e.message,"error");}
+  },[newToken,addAlert]);
+
+  // ── SESSION SAVE/RESTORE ──────────────────────────────────────────────
+  const saveSession=(t,p)=>{lsSet(LS.TOKEN,t);lsSet(LS.PROFILE,p);};
+  const logout=useCallback(()=>{
+    if(!window.confirm("Logout?"))return;
+    lsSet(LS.TOKEN,null);lsSet(LS.PROFILE,null);
+    wsRef.current?.close();
+    setToken("");setProfile(null);setSignals([]);setTrades([]);setLogs([]);
+  },[]);
+
+  // ── WAKE LOCK & NOTIFICATIONS ─────────────────────────────────────────
+  useEffect(()=>{
+    if(profile){window.FCBWakeLock?.acquire();window.FCBNotify?.request().then(ok=>setNotifPerm(ok?"granted":"denied"));}
+    return()=>{window.FCBWakeLock?.release();};
+  },[profile]);
+
+  // ── NOT LOGGED IN ─────────────────────────────────────────────────────
+  if(!profile)return(
+    <div style={{background:"#070d16",minHeight:"100vh"}}>
+      <style>{"@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');*{box-sizing:border-box;margin:0;padding:0;}"}</style>
+      <SetupScreen onConnect={(t,p)=>{setToken(t);setProfile(p);saveSession(t,p);api.post("/api/token",{token:t});setPaperMode(true);}}/>
+    </div>
+  );
+
+  const isMarket=()=>{const d=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})).getDay();return d>=1&&d<=5&&minuteOfDay>=555&&minuteOfDay<=930;};
+  const niftyDir=niftyChg!=null?(niftyChg>0.1?1:niftyChg<-0.1?-1:0):0;
+
+  return(
+    <div style={{background:"#070d16",height:"100dvh",display:"flex",flexDirection:"column",overflow:"hidden",fontFamily:"'Share Tech Mono',monospace",color:"#c8ddf0"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        @keyframes spin{to{transform:rotate(360deg);}}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+        @keyframes ping{0%{transform:scale(1);opacity:.4;}75%,100%{transform:scale(2.2);opacity:0;}}
+        @keyframes slideDown{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;}}
+        ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:2px;}
+      `}</style>
+
+      {/* ── ALERTS ── */}
+      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:999,pointerEvents:"none"}}>
+        {alerts.map(a=>(
+          <div key={a.id} style={{margin:"5px 10px",padding:"9px 13px",borderRadius:9,fontSize:10,animation:"slideDown 0.3s ease",background:a.type==="error"?"rgba(200,0,0,0.95)":a.type==="success"?"rgba(0,120,60,0.95)":a.type==="warn"?"rgba(150,100,0,0.95)":"rgba(0,60,120,0.95)",color:"#fff",boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>{a.msg}</div>
+        ))}
+      </div>
+
+      {/* ── HEADER ── */}
+      <div style={{zIndex:20,background:"rgba(7,13,22,0.97)",backdropFilter:"blur(16px)",borderBottom:"1px solid rgba(255,255,255,0.05)",padding:"8px 14px 0"}}>
+
+        {/* ── ROW 1: Title + Nifty ── */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
+            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s}/>)}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            {niftyLtp&&(
+              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#4a7a9a",fontWeight:700}}>
+                {niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}{niftyChg!=null&&<span style={{fontSize:8}}> ({niftyChg>0?"+":""}{niftyChg}%)</span>}
+              </div>
+            )}
+            {notifPerm!=="granted"&&<button onClick={()=>window.FCBNotify?.request().then(ok=>setNotifPerm(ok?"granted":"denied"))} style={{background:"none",border:"1px solid rgba(0,180,255,0.3)",borderRadius:4,padding:"1px 5px",color:"#00b4ff",fontSize:7,cursor:"pointer"}}>🔔</button>}
+            {canInstall&&<button onClick={()=>{window.deferredInstallPrompt?.prompt();}} style={{background:"rgba(0,230,118,0.1)",border:"1px solid rgba(0,230,118,0.3)",borderRadius:4,padding:"1px 5px",color:"#00e676",fontSize:7,cursor:"pointer"}}>📱</button>}
+          </div>
+        </div>
+
+        {/* ── ROW 2: Status bar ── */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,fontSize:8,color:"#2a5a7a",flexWrap:"wrap"}}>
+          <span style={{color:"#3a6a8a",fontWeight:700}}>{profile.user_name?.toUpperCase()}</span>
+          <span style={{color:"#334455"}}>·</span>
+          <span style={{padding:"1px 5px",borderRadius:3,fontSize:7,background:"rgba(255,82,82,0.15)",color:"#ff5252",fontWeight:700}}>⚡ LIVE</span>
+          <span style={{color:"#334455"}}>·</span>
+          <span style={{color:wsStatus==="connected"?"#00e676":wsStatus==="reconnecting"?"#ffc107":"#ff5252"}}>
+            {wsStatus==="connected"?"📡 WS ✓":wsStatus==="reconnecting"?"🔄 WS...":"📡 WS ✗"}
+          </span>
+          <span style={{color:"#334455"}}>·</span>
+          <span style={{display:"inline-flex",alignItems:"center",gap:3}}>
+            <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
+              <span style={{position:"absolute",width:8,height:8,borderRadius:"50%",background:isMarket()?"#00e676":"#ff5252",opacity:0.3,animation:"ping 1.5s infinite"}}/>
+              <span style={{width:6,height:6,borderRadius:"50%",background:isMarket()?"#00e676":"#ff5252",display:"block",position:"relative"}}/>
+            </span>
+            <span style={{color:isMarket()?"#00e676":"#ff5252",fontSize:7}}>{isMarket()?"NSE OPEN":"NSE CLOSED"}</span>
+          </span>
+          <span style={{color:"#334455"}}>·</span>
+          <span style={{color:"#2a5a7a"}}>{istTime} IST</span>
+          {autoMode&&<><span style={{color:"#334455"}}>·</span><span style={{color:schedule.color}}>⏰ {schedule.label}</span></>}
+        </div>
+
+        {/* ── ROW 3: Session stats ── */}
+        {walletData.set&&(()=>{
+          const openLive=trades.filter(t=>t.status==="OPEN"&&!t.paper).length;
+          const openPaper=trades.filter(t=>t.status==="PAPER").length;
+          const wins=trades.filter(t=>t.pnl!=null&&t.pnl>0).length;
+          const losses=trades.filter(t=>t.pnl!=null&&t.pnl<0).length;
+          const lossUsed=Math.abs(Math.min(0,dailyPnL));
+          const lossLimit=settings.dailyLossLimit||200;
+          const lossColor=lossUsed>=lossLimit*0.8?"#ff5252":lossUsed>=lossLimit*0.5?"#ffc107":"#2a5a7a";
+          return(
+            <div style={{display:"flex",gap:0,marginBottom:4,background:"rgba(255,255,255,0.02)",borderRadius:7,overflow:"hidden",border:"1px solid rgba(255,255,255,0.04)"}}>
+              {[
+                {label:"LIVE",value:`${openLive}/${settings.maxTrades||3}`,color:openLive>0?"#00e676":"#2a5a7a",icon:"📋"},
+                {label:"PAPER",value:`${openPaper}`,color:openPaper>0?"#00b4ff":"#2a5a7a",icon:"📝"},
+                {label:"LOSS",value:`₹${lossUsed.toFixed(0)}/₹${lossLimit}`,color:lossColor,icon:"💸"},
+                {label:"W/L",value:`${wins}W ${losses}L`,color:wins>losses?"#00e676":losses>wins?"#ff5252":"#2a5a7a",icon:"🏆"},
+                {label:"SIGNALS",value:`${signals.length}`,color:signals.length>0?"#ffd54f":"#2a5a7a",icon:"⚡"},
+              ].map(({label,value,color,icon})=>(
+                <div key={label} style={{flex:1,padding:"4px 2px",textAlign:"center",borderRight:"1px solid rgba(255,255,255,0.04)"}}>
+                  <div style={{fontSize:6,color:"#1a3a5a",letterSpacing:0.5}}>{icon} {label}</div>
+                  <div style={{fontSize:8,color,fontFamily:"'Orbitron',sans-serif",fontWeight:700,marginTop:1}}>{value}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* Nifty filter indicator */}
+        {settings.niftyFilter&&niftyDir!==0&&(
+          <div style={{background:niftyDir>0?"rgba(0,230,118,0.07)":"rgba(255,82,82,0.07)",border:`1px solid ${niftyDir>0?"rgba(0,230,118,0.2)":"rgba(255,82,82,0.2)"}`,borderRadius:7,padding:"4px 10px",marginBottom:6,fontSize:9,color:niftyDir>0?"#00e676":"#ff5252",display:"flex",justifyContent:"space-between"}}>
+            <span>{niftyDir>0?"🟢 NIFTY UP — BUY signals preferred":"🔴 NIFTY DOWN — SELL signals preferred"}</span>
+            <span style={{color:"#3a5a7a"}}>Score filter active</span>
+          </div>
+        )}
+
+        {/* Wallet */}
+        <div style={{marginBottom:6}}>
+          {!walletData.set?(
+            <div style={{background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:9,padding:"7px 11px"}}>
+              <div style={{fontSize:8,color:"#cc9900",marginBottom:4}}>💰 SET TODAY'S WALLET</div>
+              <div style={{display:"flex",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,flex:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:"4px 9px"}}>
+                  <span style={{color:"#ffd54f",fontWeight:700}}>₹</span>
+                  <input type="number" value={walletInput} onChange={e=>setWalletInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parseFloat(walletInput)>0){const amt=walletInput;setWalletData({amount:amt,set:true});api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 Wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} placeholder="e.g. 5000" style={{flex:1,background:"none",border:"none",color:"#ddeeff",fontSize:13,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
+                </div>
+                <button onClick={()=>{if(parseFloat(walletInput)>0){const amt=walletInput;setWalletData({amount:amt,set:true});api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 Wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} style={{padding:"4px 13px",background:"rgba(255,193,7,0.15)",border:"1px solid rgba(255,193,7,0.4)",borderRadius:7,color:"#ffd54f",fontSize:9,fontWeight:700,cursor:"pointer"}}>SET</button>
+              </div>
+            </div>
+          ):(
+            <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:9,padding:"7px 11px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:7,color:"#2a4a6a"}}>💰 WALLET</span>
+                <button onClick={()=>setWalletData({amount:"",set:false})} style={{background:"none",border:"none",color:"#2a4a6a",fontSize:8,cursor:"pointer"}}>✏️</button>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
+                <div><div style={{fontSize:7,color:"#1a3a5a"}}>ALLOC</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#4a7a9a",fontWeight:700}}>₹{wallet.toFixed(0)}</div></div>
+                <div style={{textAlign:"center"}}><div style={{fontSize:7,color:"#1a3a5a"}}>LOCKED</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#ffd54f",fontWeight:700}}>₹{lockedCapital.toFixed(0)}</div></div>
+                <div><div style={{fontSize:7,color:"#1a3a5a"}}>P&amp;L</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:dailyPnL>=0?"#00e676":"#ff5252",fontWeight:700}}>{dailyPnL>=0?"+":""}₹{dailyPnL.toFixed(0)}</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:7,color:"#1a3a5a"}}>AVAIL</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700,color:availBal!=null&&availBal<=0?"#ff5252":availBal!=null&&availBal<wallet*0.2?"#ffc107":"#00e676"}}>₹{availBal!=null?Math.max(0,availBal).toFixed(0):"—"}</div></div>
+              </div>
+              <div style={{height:3,background:"rgba(255,255,255,0.04)",borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${walletPct}%`,background:walletPct>50?"#00e676":walletPct>20?"#ffc107":"#ff5252",borderRadius:2,transition:"width 0.4s"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#2a4a6a"}}>
+                <span>Score≥{settings.scoreThreshold} · {settings.stockTier}</span>
+                <span>{walletPct.toFixed(0)}% left</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Mode row */}
+        <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
+          <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2,gap:2}}>
+            {["PAPER","LIVE"].map(m=>(
+              <button key={m} onClick={()=>{const pm=m==="PAPER";setPaperMode(pm);api.post("/api/settings",{paperMode:pm});}} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#2a4a6a",fontWeight:700}}>{m}</button>
+            ))}
+          </div>
+          <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#2a4a6a",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <span>⏰</span>{autoMode?"AUTO ON":"AUTO OFF"}
+          </button>
+          {botStopped&&<button onClick={()=>{setBotStopped(false);api.cmd("resume");}} style={{padding:"4px 9px",borderRadius:7,border:"1px solid rgba(0,230,118,0.3)",background:"rgba(0,230,118,0.1)",color:"#00e676",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>▶️ RESUME</button>}
+        </div>
+
+        {/* Manual strategy selector */}
+        {!autoMode&&(
+          <div style={{display:"flex",gap:3,marginBottom:6,overflowX:"auto",paddingBottom:2}}>
+            {Object.entries(STRAT_CFG).map(([k,c])=>{
+              const sel=manualStrats.includes(k);
+              return(<button key={k} onClick={()=>setManualStrats(p=>sel?p.filter(s=>s!==k):[...p,k])} style={{flexShrink:0,padding:"3px 8px",borderRadius:5,border:`1px solid ${sel?c.color+"60":"rgba(255,255,255,0.06)"}`,background:sel?`${c.color}18`:"transparent",color:sel?c.color:"#2a4a6a",cursor:"pointer",fontSize:8,fontFamily:"'Share Tech Mono',monospace",fontWeight:sel?700:400}}>{c.emoji} {k}</button>);
+            })}
+          </div>
+        )}
+
+        {/* Blocked notice */}
+        {autoMode&&schedule.blocked&&(
+          <div style={{background:"rgba(255,82,82,0.06)",border:"1px solid rgba(255,82,82,0.15)",borderRadius:6,padding:"4px 10px",marginBottom:6,textAlign:"center",color:"#ff5252",fontSize:8}}>🛑 {schedule.label} — Market not active</div>
+        )}
+
+        {/* Tabs */}
+        <div style={{display:"flex",gap:0}}>
+          {[["scanner","📡 SCAN"],["trades",`📋 TRADES${trades.length>0?` (${trades.length})`:""}`],["log","🖥 LOG"],["settings","⚙️"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"6px 2px",border:"none",background:"transparent",cursor:"pointer",color:tab===k?"#ddeeff":"#2a4a6a",fontSize:8,letterSpacing:0.5,borderBottom:tab===k?"2px solid #00b4ff":"2px solid transparent",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── BODY ── */}
+      <div style={{flex:1,overflowY:"auto",padding:"14px 14px 80px"}}>
+
+        {/* ── SCANNER TAB ── */}
+        {tab==="scanner"&&(
+          <>
+            <TimelineBar currentMin={minuteOfDay}/>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              <button
+                onClick={()=>runScan()}
+                disabled={scanning||(autoMode&&schedule.blocked)}
+                style={{flex:1,padding:14,border:"none",borderRadius:12,cursor:(scanning||(autoMode&&schedule.blocked))?"not-allowed":"pointer",background:(scanning||(autoMode&&schedule.blocked))?"rgba(255,255,255,0.04)":`linear-gradient(135deg,${schedule.color}90,${schedule.color})`,color:(scanning||(autoMode&&schedule.blocked))?"#2a4a6a":"#fff",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,letterSpacing:1,boxShadow:(scanning||(autoMode&&schedule.blocked))?"none":`0 5px 20px ${schedule.color}35`,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
+              >
+                {(autoMode&&schedule.blocked)?`🛑 ${schedule.label}`:scanning?<><span style={{width:12,height:12,border:"2px solid #1a3a5a",borderTopColor:"#00b4ff",borderRadius:"50%",animation:"spin .8s linear infinite",display:"inline-block"}}/> SCANNING...</>:`${(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")} SCAN NOW`}
+              </button>
+              {autoMode&&!schedule.blocked&&<button onClick={()=>runScan()} disabled={scanning} style={{padding:"14px 12px",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,background:"rgba(255,255,255,0.02)",color:"#3a5a7a",cursor:"pointer",fontSize:9,fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🔄</button>}
+            </div>
+            {signals.length===0&&!scanning&&(
+              <div style={{textAlign:"center",padding:"36px 20px",color:"#1a3a5a"}}>
+                <div style={{fontSize:42,marginBottom:10}}>{(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")||"📡"}</div>
+                <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:schedule.color,letterSpacing:2,marginBottom:6}}>{autoMode?`AUTO: ${schedule.label}`:`MANUAL: ${manualStrats.join(" + ")}`}</div>
+                <div style={{fontSize:9,lineHeight:1.8,color:"#1a3a5a"}}>Score threshold: {settings.scoreThreshold}/10 · {settings.stockTier}</div>
+                {settings.niftyFilter&&niftyDir!==0&&<div style={{fontSize:9,marginTop:6,color:niftyDir>0?"#00e676":"#ff5252"}}>{niftyDir>0?"🟢 Nifty +ve — BUYs favored":"🔴 Nifty -ve — SELLs favored"}</div>}
+              </div>
+            )}
+            {signals.map((s,i)=>(
+              <div key={i} style={{animation:`fadeIn .4s ease ${i*.08}s both`}}>
+                <SignalCard signal={s} onTrade={executeTrade} trading={trading} paperMode={paperMode} wallet={wallet||5000} availBal={availBal||0} settings={settings}/>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* ── TRADES TAB ── */}
+        {tab==="trades"&&(
+          <>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:9,color:"#2a4a6a",letterSpacing:1}}>TODAY'S TRADES ({trades.length})</div>
+              {trades.length>0&&<button onClick={clearTrades} style={{padding:"4px 10px",background:"rgba(255,82,82,0.08)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:7,color:"#ff5252",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 CLEAR</button>}
+            </div>
+            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#1a3a5a"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t}/>)}
+          </>
+        )}
+
+        {/* ── LOG TAB ── */}
+        {tab==="log"&&(
+          <div>
+            {/* Date + filter row — sticky so it stays visible while log scrolls */}
+            <div style={{position:"sticky",top:0,zIndex:10,background:"#070d16",paddingBottom:6}}>
+            <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
+              <span style={{fontSize:8,color:"#2a4a6a",flexShrink:0}}>📅</span>
+              <select value={logDate} onChange={e=>{setLogDate(e.target.value);setLogs([]);}} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"5px 8px",color:"#c8ddf0",fontSize:9,fontFamily:"'Share Tech Mono',monospace",outline:"none"}}>
+                <option value="today">Today</option>
+                {logDates.filter(d=>d!==new Date().toISOString().split("T")[0]).map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+              <span style={{fontSize:8,color:"#1a3a5a",flexShrink:0}}>{logs.length} lines</span>
+            </div>
+
+            {/* Filter chips */}
+            <div style={{display:"flex",gap:3,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
+              {[["all","ALL",logs.length],["trade","⚡ TRADE",logs.filter(l=>["TRADE","SIGNAL"].includes(l.type.toUpperCase())||l.msg.includes("TARGET")||l.msg.includes("STOPPED")||l.msg.includes("PAPER")).length],["scan","📡 SCAN",logs.filter(l=>l.type.toUpperCase()==="SCAN"||l.msg.includes("Scan:")||l.msg.includes("SIGNAL")).length],["error","⚠️ ERR",logs.filter(l=>["ERROR","WARN"].includes(l.type.toUpperCase())).length],["status","🕐 STATUS",logs.filter(l=>l.type.toUpperCase()==="STATUS").length]].map(([k,l,cnt])=>(
+                <button key={k} onClick={()=>setLogFilter(k)} style={{flexShrink:0,padding:"3px 9px",borderRadius:5,border:`1px solid ${logFilter===k?"rgba(0,180,255,0.5)":"rgba(255,255,255,0.06)"}`,background:logFilter===k?"rgba(0,180,255,0.12)":"transparent",color:logFilter===k?"#00b4ff":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:logFilter===k?700:400}}>
+                  {l}{cnt>0&&<span style={{marginLeft:4,background:logFilter===k?"rgba(0,180,255,0.2)":"rgba(255,255,255,0.06)",padding:"0 4px",borderRadius:8,fontSize:7}}>{cnt}</span>}
+                </button>
+              ))}
+            </div>
+            </div>{/* end sticky */}
+
+            {/* Log content */}
+            <div
+              onScroll={e=>{const el=e.currentTarget;autoScrollRef.current=el.scrollHeight-el.scrollTop-el.clientHeight<50;}}
+              style={{background:"rgba(0,0,0,0.45)",borderRadius:10,padding:"10px 11px",minHeight:200,overflowY:"visible",border:"1px solid rgba(255,255,255,0.04)",marginBottom:10,fontFamily:"'Share Tech Mono',monospace",fontSize:9}}
+            >
+              {filteredLogs.length===0?<div style={{color:"#1a3a5a",textAlign:"center",marginTop:30}}>{logs.length===0?"Waiting for bot logs...":"No entries match filter"}</div>:
+                filteredLogs.map((l,i)=>{
+                  const col=l.type.toUpperCase()==="SIGNAL"?"#ffd54f":l.type.toUpperCase()==="TRADE"?"#00e676":l.type.toUpperCase()==="ERROR"?"#ff5252":l.type.toUpperCase()==="WARN"?"#ff9800":l.type.toUpperCase()==="STATUS"?"#2a5a8a":"#3a6a8a";
+                  const bg=l.type.toUpperCase()==="SIGNAL"?"rgba(255,213,64,0.04)":l.type.toUpperCase()==="TRADE"?"rgba(0,230,118,0.03)":l.type.toUpperCase()==="ERROR"?"rgba(255,82,82,0.04)":"transparent";
+                  return(<div key={i} style={{color:col,background:bg,borderRadius:3,padding:"2px 3px",marginBottom:3,lineHeight:1.6}}><span style={{color:"#80d8ff",fontSize:8}}>[{l.ts}]</span> {l.msg}</div>);
+                })
+              }
+              <div ref={logEndRef}/>
+            </div>
+
+            {/* Download row — single click, server handles everything */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+              {[["TXT","txt","#00b4ff"],["CSV","csv","#00e676"],["JSON","json","#ffd54f"]].map(([label,fmt,color])=>(
+                <a key={fmt} href={`/api/logs/download?format=${fmt}&date=${logDate}`} download style={{display:"block",padding:"8px 0",background:`${color}10`,border:`1px solid ${color}25`,borderRadius:7,color:color,fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none"}}>📥 {label}</a>
+              ))}
+              <button onClick={()=>{setLogs([]);fetchLogsFromServer(logDate);}} style={{padding:"8px 0",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:7,color:"#4a7a9a",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🔄 RELOAD</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── SETTINGS TAB ── */}
+        {tab==="settings"&&(
+          <div>
+            {/* Bot control */}
+            <div style={{background:botStopped?"rgba(255,82,82,0.07)":"rgba(0,230,118,0.05)",border:`1px solid ${botStopped?"rgba(255,82,82,0.25)":"rgba(0,230,118,0.15)"}`,borderRadius:12,padding:13,marginBottom:12}}>
+              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:8}}>🤖 BOT CONTROL</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,color:botStopped?"#ff5252":"#00e676",fontWeight:700}}>{botStopped?"🛑 STOPPED":"▶️ RUNNING"}</div>
+                {botStopped?(
+                  <button onClick={()=>{setBotStopped(false);api.cmd("resume");addAlert("▶️ Resumed","success");}} style={{padding:"8px 14px",background:"linear-gradient(135deg,#1a4a2a,#00e676)",border:"none",borderRadius:8,color:"#fff",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,cursor:"pointer"}}>▶️ RESUME</button>
+                ):(
+                  <button onClick={()=>{if(!window.confirm("Stop bot?"))return;setBotStopped(true);api.cmd("stop");addAlert("🛑 Stopped","warn");}} style={{padding:"8px 14px",background:"linear-gradient(135deg,#c62828,#ff5252)",border:"none",borderRadius:8,color:"#fff",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,cursor:"pointer"}}>🛑 STOP</button>
+                )}
+              </div>
+            </div>
+
+            {/* Session */}
+            <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:13,marginBottom:12}}>
+              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:8}}>🔑 SESSION</div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{color:"#ddeeff",fontSize:12,fontWeight:700}}>{profile?.user_name}</div>
+                <button onClick={logout} style={{padding:"6px 11px",background:"rgba(255,82,82,0.1)",border:"1px solid rgba(255,82,82,0.25)",borderRadius:7,color:"#ff5252",fontSize:9,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🚪 LOGOUT</button>
+              </div>
+              <button onClick={()=>setShowTokenEdit(s=>!s)} style={{width:"100%",padding:8,background:"rgba(0,180,255,0.07)",border:"1px solid rgba(0,180,255,0.2)",borderRadius:7,color:"#00b4ff",fontSize:9,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer",marginBottom:showTokenEdit?6:0}}>🔑 {showTokenEdit?"CANCEL":"CHANGE TOKEN"}</button>
+              {showTokenEdit&&(
+                <div>
+                  <textarea value={newToken} onChange={e=>setNewToken(e.target.value)} placeholder="New access token..." style={{width:"100%",background:"rgba(0,0,0,0.4)",border:"1px solid rgba(0,180,255,0.25)",borderRadius:7,padding:9,color:"#c8ddf0",fontSize:10,fontFamily:"'Share Tech Mono',monospace",resize:"none",height:60,outline:"none",marginBottom:5}}/>
+                  <button onClick={applyNewToken} style={{width:"100%",padding:9,background:"linear-gradient(135deg,#003a9e,#0070ff)",color:"#fff",border:"none",borderRadius:7,fontFamily:"'Orbitron',sans-serif",fontSize:9,fontWeight:700,cursor:"pointer"}}>✅ APPLY TOKEN</button>
+                </div>
+              )}
+            </div>
+
+            {/* Risk settings */}
+            <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:13,marginBottom:12}}>
+              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:10}}>⚡ RISK SETTINGS</div>
+              {[
+                {key:"riskPct",      label:"Risk Per Trade (%)",    suffix:"%",   min:0.1,max:10, step:0.1},
+                {key:"dailyLossLimit",label:"Daily Loss Limit (₹)", prefix:"₹",  min:0,          step:50},
+                {key:"maxTrades",    label:"Max Live Trades/Day",   suffix:" tr", min:1,  max:20},
+                {key:"scoreThreshold",label:"Min Score Threshold",  suffix:"/10", min:1,  max:10},
+              ].map(({key,label,prefix,suffix,min,max,step})=>(
+                <div key={key} style={{marginBottom:12}}>
+                  <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>{label}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:7}}>
+                    {prefix&&<span style={{color:"#4a7a9a"}}>{prefix}</span>}
+                    <input type="number" value={settings[key]} onChange={e=>setSettings(s=>({...s,[key]:parseFloat(e.target.value)||min}))} min={min} max={max} step={step||1} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"8px 10px",color:"#ddeeff",fontSize:12,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
+                    {suffix&&<span style={{color:"#4a7a9a",fontSize:10}}>{suffix}</span>}
+                  </div>
+                </div>
+              ))}
+
+              {/* Stock tier */}
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>📊 Stock Universe</div>
+                <div style={{display:"flex",gap:4}}>
+                  {[["tier1","T1 (~47)"],["tier1+2","T1+2 (~77)"],["all","All (~107)"]].map(([v,l])=>(
+                    <button key={v} onClick={()=>setSettings(s=>({...s,stockTier:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.stockTier===v?"rgba(0,180,255,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.stockTier===v?"rgba(0,180,255,0.12)":"transparent",color:settings.stockTier===v?"#00b4ff":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.stockTier===v?700:400}}>{l}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Nifty filter */}
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>🔍 Nifty Direction Filter</div>
+                <div style={{display:"flex",gap:4}}>
+                  {[[true,"ON (Recommended)"],[false,"OFF"]].map(([v,l])=>(
+                    <button key={String(v)} onClick={()=>setSettings(s=>({...s,niftyFilter:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.niftyFilter===v?"rgba(0,230,118,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.niftyFilter===v?"rgba(0,230,118,0.1)":"transparent",color:settings.niftyFilter===v?"#00e676":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.niftyFilter===v?700:400}}>{l}</button>
+                  ))}
+                </div>
+              </div>
+
+              <button onClick={()=>saveSettings(settings)} style={{width:"100%",padding:13,background:"linear-gradient(135deg,#1a4a2a,#00e676)",color:"#fff",border:"none",borderRadius:9,fontFamily:"'Orbitron',sans-serif",fontSize:11,fontWeight:700,letterSpacing:2,cursor:"pointer"}}>💾 SAVE SETTINGS</button>
+            </div>
+
+            {/* Data management */}
+            <div style={{background:"rgba(255,255,255,0.01)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:12,padding:13}}>
+              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:10}}>🗃 DATA</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
+                <button onClick={clearTrades} style={{padding:"9px",background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:7,color:"#ffd54f",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🗑 CLEAR TRADES</button>
+                <button onClick={()=>{if(window.confirm("Clear today's log display?")){setLogs([]);}}} style={{padding:"9px",background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:7,color:"#ffd54f",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🗑 CLEAR LOGS</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"));
+root.render(<FCBBotV6/>);
+</script>
+</body>
+</html>
