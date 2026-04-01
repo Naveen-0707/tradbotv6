@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <meta name="theme-color" content="#070d16"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.upstox.com https://api-hft.upstox.com wss:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; font-src 'self' https: data:;"/>
 <title>⚡ FCB BOT V6</title>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -14,7 +15,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.5/protobuf.min.js"></script>
 <script src="/proto-decoder.js"></script>
 <style>
-html,body{margin:0;padding:0;background:#070d16;}
+html,body{margin:0;padding:0;background:#070d16;color:#dcecff;}
 *{box-sizing:border-box;}
 </style>
 <script>
@@ -70,7 +71,7 @@ const SCHEDULE=[
   {from:920,to:930, label:"CLOSED",         strategies:[],                    blocked:true, color:"#ff5252",emoji:"🛑"},
 ];
 function getSchedule(m){
-  return SCHEDULE.find(s=>m>=s.from&&m<s.to)||{label:"PRE-MARKET",strategies:[],blocked:true,color:"#2a4a6a",emoji:"🌙"};
+  return SCHEDULE.find(s=>m>=s.from&&m<s.to)||{label:"PRE-MARKET",strategies:[],blocked:true,color:"#6f95b8",emoji:"🌙"};
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────
@@ -84,10 +85,14 @@ async function fetchWithRetry(url,opts={},retries=3){
 }
 
 // ── API CALLS ─────────────────────────────────────────────────────────────
+const adminHeaders=()=>{
+  const key=(localStorage.getItem("fcb_v6_admin_key")||"").trim();
+  return key?{"x-fcb-admin-key":key}:{};
+};
 const api={
-  get: url=>fetchWithRetry(url).then(r=>r.json()),
-  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(r=>r.json()),
-  del: url=>fetchWithRetry(url,{method:"DELETE"}).then(r=>r.json()),
+  get: url=>fetchWithRetry(url,{headers:{...adminHeaders()}}).then(r=>r.json()),
+  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json",...adminHeaders()},body:JSON.stringify(body)}).then(r=>r.json()),
+  del: url=>fetchWithRetry(url,{method:"DELETE",headers:{...adminHeaders()}}).then(r=>r.json()),
   cmd:(cmd,extra={})=>api.post("/api/cmd",{cmd,...extra}),
 };
 
@@ -108,7 +113,7 @@ const getProfile=async t=>{const r=await fetchWithRetry(`${UPSTOX_BASE}/user/pro
 
 // ── LOCAL STORAGE ─────────────────────────────────────────────────────────
 // Only for token, profile, settings, wallet — NOT for logs (server-side now)
-const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet"};
+const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet",ADMIN_KEY:"fcb_v6_admin_key"};
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
 
@@ -135,6 +140,8 @@ function CandleChart({candles,signal}){
       {signal?.vwap&&signal.vwap>=mnP&&signal.vwap<=mxP&&<line x1={pad} y1={py(signal.vwap)} x2={W-pad} y2={py(signal.vwap)} stroke="#ffd54f" strokeWidth={1} strokeDasharray="2,2"/>}
       {signal?.upper1&&signal.upper1>=mnP&&signal.upper1<=mxP&&<line x1={pad} y1={py(signal.upper1)} x2={W-pad} y2={py(signal.upper1)} stroke="#00e5ff" strokeWidth={1} strokeDasharray="2,2"/>}
       {signal?.lower1&&signal.lower1>=mnP&&signal.lower1<=mxP&&<line x1={pad} y1={py(signal.lower1)} x2={W-pad} y2={py(signal.lower1)} stroke="#ff9800" strokeWidth={1} strokeDasharray="2,2"/>}
+      {signal?.upper2&&signal.upper2>=mnP&&signal.upper2<=mxP&&<line x1={pad} y1={py(signal.upper2)} x2={W-pad} y2={py(signal.upper2)} stroke="#00e5ff" strokeWidth={1} strokeDasharray="1,2"/>}
+      {signal?.lower2&&signal.lower2>=mnP&&signal.lower2<=mxP&&<line x1={pad} y1={py(signal.lower2)} x2={W-pad} y2={py(signal.lower2)} stroke="#ff9800" strokeWidth={1} strokeDasharray="1,2"/>}
       {signal?.ema21&&signal.ema21>=mnP&&signal.ema21<=mxP&&<line x1={pad} y1={py(signal.ema21)} x2={W-pad} y2={py(signal.ema21)} stroke="#69f0ae" strokeWidth={1} strokeDasharray="2,2"/>}
       {signal?.superTrend&&signal.superTrend>=mnP&&signal.superTrend<=mxP&&<line x1={pad} y1={py(signal.superTrend)} x2={W-pad} y2={py(signal.superTrend)} stroke="#ff5252" strokeWidth={1} strokeDasharray="2,2"/>}
     </svg>
@@ -144,7 +151,7 @@ function CandleChart({candles,signal}){
 // ── SCORE GAUGE (0-10 colored pips) ──────────────────────────────────────
 function ScoreGauge({score}){
   const pipColor=i=>{
-    if(i>score)return{bg:"rgba(255,255,255,0.04)",border:"rgba(255,255,255,0.06)",color:"#1a3a5a"};
+    if(i>score)return{bg:"rgba(255,255,255,0.04)",border:"rgba(255,255,255,0.06)",color:"#5f86a8"};
     if(score<=5)return{bg:"rgba(255,82,82,0.15)",border:"rgba(255,82,82,0.4)",color:"#ff5252"};
     if(score===6)return{bg:"rgba(255,152,0,0.15)",border:"rgba(255,152,0,0.4)",color:"#ff9800"};
     if(score<=8)return{bg:"rgba(255,213,64,0.15)",border:"rgba(255,213,64,0.4)",color:"#ffd54f"};
@@ -190,19 +197,19 @@ function TimelineBar({currentMin}){
   const total=930-555;
   return(
     <div style={{marginBottom:12}}>
-      <div style={{fontSize:8,color:"#2a4a6a",letterSpacing:1,marginBottom:4,textAlign:"center"}}>— TODAY'S STRATEGY TIMELINE —</div>
+      <div style={{fontSize:8,color:"#6f95b8",letterSpacing:1,marginBottom:4,textAlign:"center"}}>— TODAY'S STRATEGY TIMELINE —</div>
       <div style={{position:"relative",height:28,background:"rgba(255,255,255,0.02)",borderRadius:8,overflow:"hidden",border:"1px solid rgba(255,255,255,0.05)"}}>
         {SCHEDULE.map((s,i)=>{
           const left=((s.from-555)/total)*100;
           const width=((s.to-s.from)/total)*100;
           const active=currentMin>=s.from&&currentMin<s.to;
           return(<div key={i} style={{position:"absolute",left:`${left}%`,width:`${width}%`,height:"100%",background:active?`${s.color}30`:`${s.color}08`,borderRight:"1px solid rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",transition:"background 0.5s"}}>
-            <span style={{fontSize:7,color:active?s.color:"#1a3a5a",fontFamily:"'Share Tech Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",padding:"0 2px",fontWeight:active?700:400}}>{active?"▶ ":""}{s.emoji}</span>
+            <span style={{fontSize:7,color:active?s.color:"#5f86a8",fontFamily:"'Share Tech Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",padding:"0 2px",fontWeight:active?700:400}}>{active?"▶ ":""}{s.emoji}</span>
           </div>);
         })}
         {currentMin>=555&&currentMin<=930&&<div style={{position:"absolute",left:`${((currentMin-555)/total)*100}%`,top:0,bottom:0,width:2,background:"#ffffff",opacity:0.5,borderRadius:1}}/>}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#1a3a5a",padding:"0 2px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#5f86a8",padding:"0 2px"}}>
         <span>9:15</span><span>9:20</span><span>9:35</span><span>11:30</span><span>1:30</span><span>2:30</span><span>3:20</span>
       </div>
     </div>
@@ -241,7 +248,7 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
           <SBadge strat={signal.strategy}/>
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{color:"#3a5570",fontSize:8}}>R:R</div>
+          <div style={{color:"#6f8ea9",fontSize:8}}>R:R</div>
           <div style={{color:"#ffd54f",fontFamily:"'Orbitron',sans-serif",fontSize:17,fontWeight:700}}>{signal.rrLabel}</div>
         </div>
       </div>
@@ -252,7 +259,7 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
       {/* Direction + extras */}
       <div style={{marginBottom:8}}>
         <span style={{display:"inline-block",padding:"3px 10px",borderRadius:6,fontSize:11,background:buy?"rgba(0,230,118,0.12)":"rgba(255,82,82,0.12)",color:col,border:`1px solid ${col}40`,fontFamily:"'Share Tech Mono',monospace",fontWeight:700}}>{buy?"▲ BUY":"▼ SELL"}</span>
-        {extras.length>0&&<span style={{marginLeft:8,fontSize:9,color:"#3a6a8a",fontFamily:"'Share Tech Mono',monospace"}}>{extras.join(" · ")}</span>}
+        {extras.length>0&&<span style={{marginLeft:8,fontSize:9,color:"#79a7c7",fontFamily:"'Share Tech Mono',monospace"}}>{extras.join(" · ")}</span>}
       </div>
       {/* Candle chart */}
       <CandleChart candles={signal.candles} signal={signal}/>
@@ -260,26 +267,26 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,margin:"10px 0"}}>
         {[["ENTRY",`₹${signal.entry}`,"#c8ddf0"],["TARGET",`₹${signal.target}`,"#00e676"],["STOP LOSS",`₹${signal.sl}`,"#ff5252"]].map(([l,v,c])=>(
           <div key={l} style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"8px 6px",textAlign:"center"}}>
-            <div style={{color:"#2a4a6a",fontSize:8,marginBottom:2}}>{l}</div>
+            <div style={{color:"#6f95b8",fontSize:8,marginBottom:2}}>{l}</div>
             <div style={{color:c,fontFamily:"'Share Tech Mono',monospace",fontSize:12,fontWeight:700}}>{v}</div>
           </div>
         ))}
       </div>
       {/* Stats row */}
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7a9a",marginBottom:10,fontFamily:"'Share Tech Mono',monospace"}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#8bb7d3",marginBottom:10,fontFamily:"'Share Tech Mono',monospace"}}>
         <span>⚡ Risk: <b style={{color:"#ffd54f"}}>₹{signal.risk}</b></span>
         <span>📊 Vol: <b style={{color:"#80d8ff"}}>{signal.volRatio}×</b></span>
         <span>📉 {signal.riskPct}%</span>
       </div>
       {/* Qty control */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-        <span style={{color:"#3a5570",fontSize:11}}>QTY:</span>
+        <span style={{color:"#6f8ea9",fontSize:11}}>QTY:</span>
         <div style={{display:"flex",alignItems:"center",background:"rgba(255,255,255,0.05)",borderRadius:8}}>
           <button onClick={()=>setQty(q=>Math.max(1,q-1))} style={{background:"none",border:"none",color:"#7a9ab0",cursor:"pointer",padding:"6px 12px",fontSize:16}}>−</button>
           <span style={{color:"#ddeeff",fontFamily:"'Orbitron',sans-serif",fontSize:14,minWidth:28,textAlign:"center"}}>{qty}</span>
           <button onClick={()=>setQty(q=>q+1)} style={{background:"none",border:"none",color:"#7a9ab0",cursor:"pointer",padding:"6px 12px",fontSize:16}}>+</button>
         </div>
-        <span style={{color:"#3a5570",fontSize:11}}>Max loss: <b style={{color:"#ff5252"}}>₹{(signal.risk*qty).toFixed(0)}</b></span>
+        <span style={{color:"#6f8ea9",fontSize:11}}>Max loss: <b style={{color:"#ff5252"}}>₹{(signal.risk*qty).toFixed(0)}</b></span>
       </div>
       {/* Balance warning */}
       {!balOk&&<div style={{fontSize:9,color:"#cc3030",marginBottom:8,fontFamily:"'Share Tech Mono',monospace"}}>⛔ Need ₹{cost.toFixed(0)} · Only ₹{Math.max(0,availBal).toFixed(0)} available</div>}
@@ -288,11 +295,11 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
       <button
         onClick={()=>!trading&&balOk&&onTrade(signal,qty)}
         disabled={trading||!balOk}
-        style={{width:"100%",padding:14,background:(!balOk||trading)?"rgba(255,255,255,0.04)":(buy?"linear-gradient(135deg,#00897b,#00e676)":"linear-gradient(135deg,#c62828,#ff5252)"),color:(!balOk||trading)?"#3a5570":"#fff",border:"none",borderRadius:10,fontFamily:"'Orbitron',sans-serif",fontSize:11,fontWeight:700,letterSpacing:2,cursor:(!balOk||trading)?"not-allowed":"pointer",boxShadow:(!balOk||trading)?"none":`0 4px 20px ${buy?"rgba(0,200,120,0.3)":"rgba(200,0,0,0.3)"}`}}
+        style={{width:"100%",padding:14,background:(!balOk||trading)?"rgba(255,255,255,0.04)":(buy?"linear-gradient(135deg,#00897b,#00e676)":"linear-gradient(135deg,#c62828,#ff5252)"),color:(!balOk||trading)?"#6f8ea9":"#fff",border:"none",borderRadius:10,fontFamily:"'Orbitron',sans-serif",fontSize:11,fontWeight:700,letterSpacing:2,cursor:(!balOk||trading)?"not-allowed":"pointer",boxShadow:(!balOk||trading)?"none":`0 4px 20px ${buy?"rgba(0,200,120,0.3)":"rgba(200,0,0,0.3)"}`}}
       >
         {trading?"PLACING ORDERS...":!balOk?"⛔ INSUFFICIENT BALANCE":paperMode?"📝 PAPER TRADE":`⚡ ${signal.direction}`}
       </button>
-      {!paperMode&&<div style={{marginTop:5,fontSize:8,color:"#1a3a5a",textAlign:"center"}}>Entry + Target + SL via HFT endpoint</div>}
+      {!paperMode&&<div style={{marginTop:5,fontSize:8,color:"#5f86a8",textAlign:"center"}}>Entry + Target + SL via HFT endpoint</div>}
     </div>
   );
 }
@@ -313,19 +320,19 @@ function TradeCard({trade}){
         </div>
         <span style={{fontSize:8,color:statusColor,background:`${statusColor}15`,padding:"3px 8px",borderRadius:4,fontFamily:"'Share Tech Mono',monospace"}}>{trade.status}</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,fontSize:10,color:"#4a7a9a",marginBottom:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,fontSize:10,color:"#8bb7d3",marginBottom:8}}>
         <div>QTY: <b style={{color:"#80b0d0"}}>{trade.qty}</b></div>
         <div>@ <b style={{color:"#c0d8f0"}}>₹{trade.entry}</b></div>
         <div>T: <b style={{color:"#00e676"}}>₹{trade.target}</b></div>
         <div>SL: <b style={{color:"#ff5252"}}>₹{trade.sl}</b></div>
       </div>
       {trade.livePnl!=null&&(trade.status==="OPEN"||trade.status==="PAPER")&&(
-        <div style={{fontSize:9,color:"#2a4a6a",marginBottom:6,fontFamily:"'Share Tech Mono',monospace"}}>
+        <div style={{fontSize:9,color:"#6f95b8",marginBottom:6,fontFamily:"'Share Tech Mono',monospace"}}>
           LTP ₹{trade.ltp||"?"} · Live P&L: <span style={{color:trade.livePnl>=0?"#00e676":"#ff5252"}}>{trade.livePnl>=0?"+":""}₹{trade.livePnl}</span>
         </div>
       )}
       {trade.pnl!=null&&trade.pnl!==null&&<div style={{background:`${pnlColor}10`,border:`1px solid ${pnlColor}25`,borderRadius:8,padding:"5px 10px",marginBottom:6,textAlign:"center"}}><span style={{color:pnlColor,fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700}}>{trade.pnl>=0?"+":""}₹{trade.pnl.toFixed(0)}</span><span style={{color:"#3a5a7a",fontSize:9,marginLeft:8}}>P&L</span></div>}
-      <div style={{fontSize:8,color:"#1a3a5a"}}>{trade.time} · {trade.paper?"📋 PAPER":"⚡ LIVE"}</div>
+      <div style={{fontSize:8,color:"#5f86a8"}}>{trade.time} · {trade.paper?"📋 PAPER":"⚡ LIVE"}</div>
     </div>
   );
 }
@@ -357,10 +364,10 @@ function SetupScreen({onConnect}){
         <div style={{fontSize:10,color:"#cc3030",fontWeight:700,marginBottom:4}}>⚠️ LIVE TRADING</div>
         <div style={{fontSize:9,color:"#664444",lineHeight:1.7}}>This bot places <b style={{color:"#ff5252"}}>real orders</b> on NSE via Upstox HFT API.<br/>Paper mode is ON by default for safety. NSE requires a <b style={{color:"#ffc107"}}>Static IP</b> for algo trading.</div>
       </div>
-      <div style={{marginBottom:6,fontSize:10,color:"#4a7a9a",letterSpacing:1}}>🔑 UPSTOX ACCESS TOKEN</div>
+      <div style={{marginBottom:6,fontSize:10,color:"#8bb7d3",letterSpacing:1}}>🔑 UPSTOX ACCESS TOKEN</div>
       <textarea value={tok} onChange={e=>setTok(e.target.value)} placeholder="Paste your live access token here..." style={{width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:10,padding:12,color:"#c8ddf0",fontSize:11,fontFamily:"'Share Tech Mono',monospace",resize:"none",height:70,outline:"none",marginBottom:6}}/>
       {err&&<div style={{color:"#ff5252",fontSize:10,marginBottom:8}}>{err}</div>}
-      <button onClick={connect} disabled={loading} style={{width:"100%",padding:16,background:loading?"rgba(255,255,255,0.04)":"linear-gradient(135deg,#c62828,#ff5252)",color:loading?"#2a4a6a":"#fff",border:"none",borderRadius:12,fontFamily:"'Orbitron',sans-serif",fontSize:12,fontWeight:700,letterSpacing:2,cursor:loading?"not-allowed":"pointer"}}>
+      <button onClick={connect} disabled={loading} style={{width:"100%",padding:16,background:loading?"rgba(255,255,255,0.04)":"linear-gradient(135deg,#c62828,#ff5252)",color:loading?"#6f95b8":"#fff",border:"none",borderRadius:12,fontFamily:"'Orbitron',sans-serif",fontSize:12,fontWeight:700,letterSpacing:2,cursor:loading?"not-allowed":"pointer"}}>
         {loading?"VERIFYING...":"⚡ CONNECT →"}
       </button>
     </div>
@@ -627,7 +634,8 @@ function FCBBotV6(){
   const lockedCapital=useMemo(()=>trades.filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.direction==="BUY").reduce((s,t)=>s+(t.entry*t.qty),0),[trades]);
   const availBal=walletData.set&&wallet>0?wallet+dailyLivePnL+openLivePnL-lockedCapital:null;
   const walletPct=walletData.set&&wallet>0?Math.max(0,(availBal/wallet)*100):100;
-  const dailyLimitHit=!paperMode&&(trades.reduce((s,t)=>s+(t.pnl!==null?t.pnl:(t.livePnl||0)),0)<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
+  const liveLossPnl=useMemo(()=>trades.filter(t=>!t.paper).reduce((s,t)=>s+(t.pnl!==null?t.pnl:(t.livePnl||0)),0),[trades]);
+  const dailyLimitHit=!paperMode&&(liveLossPnl<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
 
   // Filtered logs
   const filteredLogs=useMemo(()=>{
@@ -681,14 +689,10 @@ function FCBBotV6(){
         // Sync to bot so hasOpenPosition() fires correctly for UI-placed trades
         try{ await api.post("/api/cmd",{cmd:"manual_paper",trade:t}); }catch{}
       }else{
-        // Find instrument key from STRAT_CFG — we need it for live orders
-        // Fetch from config endpoint to get the stock list
-        addAlert(`🔄 Placing: ${signal.direction} ${qty}× ${signal.name}`,"info");
-        const cfg=await api.get("/api/config");
-        // Note: in live mode, bot.js handles the order via its own scan
-        // UI direct order is only for manual trades via signal card
-        // For simplicity we use the scan cmd which bot executes
-        addAlert("⚠️ Use SCAN for live trades (bot executes)","warn");
+        // Live safety: manual one-tap live execution from signal card is disabled.
+        // Use SCAN/AUTO so bot.js executes live entries with its full guards.
+        addAlert("⚠️ Live manual trade disabled. Use SCAN/AUTO (bot executes).","warn");
+        return;
       }
     }catch(e){addAlert("❌ Trade error: "+e.message,"error");}
     setTrading(false);
@@ -781,7 +785,7 @@ function FCBBotV6(){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             {niftyLtp&&(
-              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#4a7a9a",fontWeight:700}}>
+              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#8bb7d3",fontWeight:700}}>
                 {niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}{niftyChg!=null&&<span style={{fontSize:8}}> ({niftyChg>0?"+":""}{niftyChg}%)</span>}
               </div>
             )}
@@ -791,15 +795,15 @@ function FCBBotV6(){
         </div>
 
         {/* ── ROW 2: Status bar ── */}
-        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,fontSize:8,color:"#2a5a7a",overflow:"hidden"}}>
-          <span style={{color:"#3a6a8a",fontWeight:700}}>{profile.user_name?.toUpperCase()}</span>
-          <span style={{color:"#334455"}}>·</span>
+        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,fontSize:8,color:"#7da8c6",overflow:"hidden"}}>
+          <span style={{color:"#79a7c7",fontWeight:700}}>{profile.user_name?.toUpperCase()}</span>
+          <span style={{color:"#7f9bb2"}}>·</span>
           <span style={{padding:"1px 5px",borderRadius:3,fontSize:7,background:"rgba(255,82,82,0.15)",color:"#ff5252",fontWeight:700}}>⚡ LIVE</span>
-          <span style={{color:"#334455"}}>·</span>
+          <span style={{color:"#7f9bb2"}}>·</span>
           <span style={{color:wsStatus==="connected"?"#00e676":wsStatus==="reconnecting"?"#ffc107":"#ff5252"}}>
             {wsStatus==="connected"?"📡 WS ✓":wsStatus==="reconnecting"?"🔄 WS...":"📡 WS ✗"}
           </span>
-          <span style={{color:"#334455"}}>·</span>
+          <span style={{color:"#7f9bb2"}}>·</span>
           <span style={{display:"inline-flex",alignItems:"center",gap:3}}>
             <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
               <span style={{position:"absolute",width:8,height:8,borderRadius:"50%",background:isMarket()?"#00e676":"#ff5252",opacity:0.3,animation:"ping 1.5s infinite"}}/>
@@ -807,9 +811,9 @@ function FCBBotV6(){
             </span>
             <span style={{color:isMarket()?"#00e676":"#ff5252",fontSize:7}}>{isMarket()?"NSE OPEN":"NSE CLOSED"}</span>
           </span>
-          <span style={{color:"#334455"}}>·</span>
-          <span style={{color:"#2a5a7a"}}>{istTime} IST</span>
-          {autoMode&&<><span style={{color:"#334455"}}>·</span><span style={{color:schedule.color}}>⏰ {schedule.label}</span></>}
+          <span style={{color:"#7f9bb2"}}>·</span>
+          <span style={{color:"#7da8c6"}}>{istTime} IST</span>
+          {autoMode&&<><span style={{color:"#7f9bb2"}}>·</span><span style={{color:schedule.color}}>⏰ {schedule.label}</span></>}
         </div>
 
         {/* ── ROW 3: Session stats ── */}
@@ -821,18 +825,18 @@ function FCBBotV6(){
           // FIX 3: LOSS bar tracks live-only closed P&L + unrealized (matches bot.js limit check)
           const lossUsed=Math.abs(Math.min(0,dailyLivePnL+openLivePnL));
           const lossLimit=settings.dailyLossLimit||200;
-          const lossColor=lossUsed>=lossLimit*0.8?"#ff5252":lossUsed>=lossLimit*0.5?"#ffc107":"#2a5a7a";
+          const lossColor=lossUsed>=lossLimit*0.8?"#ff5252":lossUsed>=lossLimit*0.5?"#ffc107":"#7da8c6";
           return(
             <div style={{display:"flex",gap:0,marginBottom:4,background:"rgba(255,255,255,0.02)",borderRadius:7,overflow:"hidden",border:"1px solid rgba(255,255,255,0.04)"}}>
               {[
-                {label:"LIVE",value:`${openLive}/${settings.maxTrades||3}`,color:openLive>0?"#00e676":"#2a5a7a",icon:"📋"},
-                {label:"PAPER",value:`${openPaper}`,color:openPaper>0?"#00b4ff":"#2a5a7a",icon:"📝"},
+                {label:"LIVE",value:`${openLive}/${settings.maxTrades||3}`,color:openLive>0?"#00e676":"#7da8c6",icon:"📋"},
+                {label:"PAPER",value:`${openPaper}`,color:openPaper>0?"#00b4ff":"#7da8c6",icon:"📝"},
                 {label:"LOSS",value:`₹${lossUsed.toFixed(0)}/₹${lossLimit}`,color:lossColor,icon:"💸"},
-                {label:"W/L",value:`${wins}W ${losses}L`,color:wins>losses?"#00e676":losses>wins?"#ff5252":"#2a5a7a",icon:"🏆"},
-                {label:"SIGNALS",value:`${signals.length}`,color:signals.length>0?"#ffd54f":"#2a5a7a",icon:"⚡"},
+                {label:"W/L",value:`${wins}W ${losses}L`,color:wins>losses?"#00e676":losses>wins?"#ff5252":"#7da8c6",icon:"🏆"},
+                {label:"SIGNALS",value:`${signals.length}`,color:signals.length>0?"#ffd54f":"#7da8c6",icon:"⚡"},
               ].map(({label,value,color,icon})=>(
                 <div key={label} style={{flex:1,padding:"4px 2px",textAlign:"center",borderRight:"1px solid rgba(255,255,255,0.04)"}}>
-                  <div style={{fontSize:6,color:"#1a3a5a",letterSpacing:0.5}}>{icon} {label}</div>
+                  <div style={{fontSize:6,color:"#5f86a8",letterSpacing:0.5}}>{icon} {label}</div>
                   <div style={{fontSize:8,color,fontFamily:"'Orbitron',sans-serif",fontWeight:700,marginTop:1}}>{value}</div>
                 </div>
               ))}
@@ -864,19 +868,19 @@ function FCBBotV6(){
           ):(
             <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:9,padding:"7px 11px"}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                <span style={{fontSize:7,color:"#2a4a6a"}}>💰 WALLET</span>
-                <button onClick={()=>setWalletData({amount:"",set:false})} style={{background:"none",border:"none",color:"#2a4a6a",fontSize:8,cursor:"pointer"}}>✏️</button>
+                <span style={{fontSize:7,color:"#6f95b8"}}>💰 WALLET</span>
+                <button onClick={()=>setWalletData({amount:"",set:false})} style={{background:"none",border:"none",color:"#6f95b8",fontSize:8,cursor:"pointer"}}>✏️</button>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
-                <div><div style={{fontSize:7,color:"#1a3a5a"}}>ALLOC</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#4a7a9a",fontWeight:700}}>₹{wallet.toFixed(0)}</div></div>
-                <div style={{textAlign:"center"}}><div style={{fontSize:7,color:"#1a3a5a"}}>LOCKED</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#ffd54f",fontWeight:700}}>₹{lockedCapital.toFixed(0)}</div></div>
-                <div><div style={{fontSize:7,color:"#1a3a5a"}}>P&amp;L</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:(dailyLivePnL+openLivePnL)>=0?"#00e676":"#ff5252",fontWeight:700}}>{(dailyLivePnL+openLivePnL)>=0?"+":""}₹{(dailyLivePnL+openLivePnL).toFixed(0)}</div></div>
-                <div style={{textAlign:"right"}}><div style={{fontSize:7,color:"#1a3a5a"}}>AVAIL</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700,color:availBal!=null&&availBal<=0?"#ff5252":availBal!=null&&availBal<wallet*0.2?"#ffc107":"#00e676"}}>₹{availBal!=null?Math.max(0,availBal).toFixed(0):"—"}</div></div>
+                <div><div style={{fontSize:7,color:"#5f86a8"}}>ALLOC</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#8bb7d3",fontWeight:700}}>₹{wallet.toFixed(0)}</div></div>
+                <div style={{textAlign:"center"}}><div style={{fontSize:7,color:"#5f86a8"}}>LOCKED</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#ffd54f",fontWeight:700}}>₹{lockedCapital.toFixed(0)}</div></div>
+                <div><div style={{fontSize:7,color:"#5f86a8"}}>P&amp;L</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:(dailyLivePnL+openLivePnL)>=0?"#00e676":"#ff5252",fontWeight:700}}>{(dailyLivePnL+openLivePnL)>=0?"+":""}₹{(dailyLivePnL+openLivePnL).toFixed(0)}</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:7,color:"#5f86a8"}}>AVAIL</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700,color:availBal!=null&&availBal<=0?"#ff5252":availBal!=null&&availBal<wallet*0.2?"#ffc107":"#00e676"}}>₹{availBal!=null?Math.max(0,availBal).toFixed(0):"—"}</div></div>
               </div>
               <div style={{height:3,background:"rgba(255,255,255,0.04)",borderRadius:2,overflow:"hidden"}}>
                 <div style={{height:"100%",width:`${walletPct}%`,background:walletPct>50?"#00e676":walletPct>20?"#ffc107":"#ff5252",borderRadius:2,transition:"width 0.4s"}}/>
               </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#2a4a6a"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#6f95b8"}}>
                 <span>Score≥{settings.scoreThreshold} · {settings.stockTier}</span>
                 <span>{walletPct.toFixed(0)}% left</span>
               </div>
@@ -888,10 +892,32 @@ function FCBBotV6(){
         <div style={{display:"flex",gap:6,marginBottom:6,alignItems:"center"}}>
           <div style={{display:"flex",background:"rgba(255,255,255,0.04)",borderRadius:7,padding:2,gap:2}}>
             {["PAPER","LIVE"].map(m=>(
-              <button key={m} onClick={()=>{const pm=m==="PAPER";setPaperMode(pm);api.post("/api/settings",{paperMode:pm});}} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#2a4a6a",fontWeight:700}}>{m}</button>
+              <button key={m} onClick={async()=>{
+                const pm=m==="PAPER";
+                if(!pm){
+                  const confirm=window.prompt("Type LIVE to enable real orders:");
+                  if(confirm!=="LIVE"){addAlert("❌ LIVE mode cancelled","warn");return;}
+                  const r=await api.post("/api/settings",{paperMode:false,confirmLive:"LIVE"});
+                  if(r?.ok===false){addAlert(`❌ ${r.error||"LIVE mode blocked"}`,"error");return;}
+                }else{
+                  await api.post("/api/settings",{paperMode:true});
+                }
+                setPaperMode(pm);
+              }} style={{padding:"3px 9px",borderRadius:5,border:"none",cursor:"pointer",fontSize:8,fontFamily:"'Orbitron',sans-serif",background:(m==="PAPER")===paperMode?(m==="LIVE"?"rgba(255,82,82,0.2)":"rgba(0,180,255,0.15)"):"transparent",color:(m==="PAPER")===paperMode?(m==="LIVE"?"#ff5252":"#00b4ff"):"#6f95b8",fontWeight:700}}>{m}</button>
             ))}
           </div>
-          <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#2a4a6a",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+          <button onClick={()=>{
+            const existing=(localStorage.getItem("fcb_v6_admin_key")||"").trim();
+            const next=window.prompt("Set admin key for secured bridge (leave blank to clear):",existing);
+            if(next===null)return;
+            const v=next.trim();
+            if(v)localStorage.setItem("fcb_v6_admin_key",v);
+            else localStorage.removeItem("fcb_v6_admin_key");
+            addAlert(v?"🔐 Admin key saved":"🧹 Admin key cleared","info");
+          }} style={{padding:"4px 8px",borderRadius:7,border:"1px solid rgba(120,170,255,0.25)",background:"rgba(120,170,255,0.08)",color:"#7fb1ff",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700}}>
+            🔐 KEY
+          </button>
+          <button onClick={()=>{setAutoMode(a=>!a);setSignals([]);}} style={{flex:1,padding:"4px 8px",borderRadius:7,border:`1px solid ${autoMode?"rgba(255,213,64,0.4)":"rgba(255,255,255,0.08)"}`,background:autoMode?"rgba(255,213,64,0.1)":"rgba(255,255,255,0.02)",color:autoMode?"#ffd54f":"#6f95b8",cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
             <span>⏰</span>{autoMode?"AUTO ON":"AUTO OFF"}
           </button>
           {botStopped&&<button onClick={()=>{setBotStopped(false);api.cmd("resume");}} style={{padding:"4px 9px",borderRadius:7,border:"1px solid rgba(0,230,118,0.3)",background:"rgba(0,230,118,0.1)",color:"#00e676",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>▶️ RESUME</button>}
@@ -902,7 +928,7 @@ function FCBBotV6(){
           <div style={{display:"flex",gap:3,marginBottom:6,overflowX:"auto",paddingBottom:2}}>
             {Object.entries(STRAT_CFG).map(([k,c])=>{
               const sel=manualStrats.includes(k);
-              return(<button key={k} onClick={()=>setManualStrats(p=>sel?p.filter(s=>s!==k):[...p,k])} style={{flexShrink:0,padding:"3px 8px",borderRadius:5,border:`1px solid ${sel?c.color+"60":"rgba(255,255,255,0.06)"}`,background:sel?`${c.color}18`:"transparent",color:sel?c.color:"#2a4a6a",cursor:"pointer",fontSize:8,fontFamily:"'Share Tech Mono',monospace",fontWeight:sel?700:400}}>{c.emoji} {k}</button>);
+              return(<button key={k} onClick={()=>setManualStrats(p=>sel?p.filter(s=>s!==k):[...p,k])} style={{flexShrink:0,padding:"3px 8px",borderRadius:5,border:`1px solid ${sel?c.color+"60":"rgba(255,255,255,0.06)"}`,background:sel?`${c.color}18`:"transparent",color:sel?c.color:"#6f95b8",cursor:"pointer",fontSize:8,fontFamily:"'Share Tech Mono',monospace",fontWeight:sel?700:400}}>{c.emoji} {k}</button>);
             })}
           </div>
         )}
@@ -915,7 +941,7 @@ function FCBBotV6(){
         {/* Tabs */}
         <div style={{display:"flex",gap:0}}>
           {[["scanner","📡 SCAN"],["trades",`📋 TRADES${trades.length>0?` (${trades.length})`:""}`],["log","🖥 LOG"],["settings","⚙️"]].map(([k,l])=>(
-            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"6px 2px",border:"none",background:"transparent",cursor:"pointer",color:tab===k?"#ddeeff":"#2a4a6a",fontSize:8,letterSpacing:0.5,borderBottom:tab===k?"2px solid #00b4ff":"2px solid transparent",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>{l}</button>
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"6px 2px",border:"none",background:"transparent",cursor:"pointer",color:tab===k?"#ddeeff":"#6f95b8",fontSize:8,letterSpacing:0.5,borderBottom:tab===k?"2px solid #00b4ff":"2px solid transparent",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>{l}</button>
           ))}
         </div>
       </div>
@@ -931,17 +957,17 @@ function FCBBotV6(){
               <button
                 onClick={()=>runScan()}
                 disabled={scanning||(autoMode&&schedule.blocked)}
-                style={{flex:1,padding:14,border:"none",borderRadius:12,cursor:(scanning||(autoMode&&schedule.blocked))?"not-allowed":"pointer",background:(scanning||(autoMode&&schedule.blocked))?"rgba(255,255,255,0.04)":`linear-gradient(135deg,${schedule.color}90,${schedule.color})`,color:(scanning||(autoMode&&schedule.blocked))?"#2a4a6a":"#fff",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,letterSpacing:1,boxShadow:(scanning||(autoMode&&schedule.blocked))?"none":`0 5px 20px ${schedule.color}35`,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
+                style={{flex:1,padding:14,border:"none",borderRadius:12,cursor:(scanning||(autoMode&&schedule.blocked))?"not-allowed":"pointer",background:(scanning||(autoMode&&schedule.blocked))?"rgba(255,255,255,0.04)":`linear-gradient(135deg,${schedule.color}90,${schedule.color})`,color:(scanning||(autoMode&&schedule.blocked))?"#6f95b8":"#fff",fontFamily:"'Orbitron',sans-serif",fontSize:10,fontWeight:700,letterSpacing:1,boxShadow:(scanning||(autoMode&&schedule.blocked))?"none":`0 5px 20px ${schedule.color}35`,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
               >
-                {(autoMode&&schedule.blocked)?`🛑 ${schedule.label}`:scanning?<><span style={{width:12,height:12,border:"2px solid #1a3a5a",borderTopColor:"#00b4ff",borderRadius:"50%",animation:"spin .8s linear infinite",display:"inline-block"}}/> SCANNING...</>:`${(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")} SCAN NOW`}
+                {(autoMode&&schedule.blocked)?`🛑 ${schedule.label}`:scanning?<><span style={{width:12,height:12,border:"2px solid #5f86a8",borderTopColor:"#00b4ff",borderRadius:"50%",animation:"spin .8s linear infinite",display:"inline-block"}}/> SCANNING...</>:`${(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")} SCAN NOW`}
               </button>
               {autoMode&&!schedule.blocked&&<button onClick={()=>runScan()} disabled={scanning} style={{padding:"14px 12px",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,background:"rgba(255,255,255,0.02)",color:"#3a5a7a",cursor:"pointer",fontSize:9,fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🔄</button>}
             </div>
             {signals.length===0&&!scanning&&(
-              <div style={{textAlign:"center",padding:"36px 20px",color:"#1a3a5a"}}>
+              <div style={{textAlign:"center",padding:"36px 20px",color:"#5f86a8"}}>
                 <div style={{fontSize:42,marginBottom:10}}>{(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")||"📡"}</div>
                 <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:schedule.color,letterSpacing:2,marginBottom:6}}>{autoMode?`AUTO: ${schedule.label}`:`MANUAL: ${manualStrats.join(" + ")}`}</div>
-                <div style={{fontSize:9,lineHeight:1.8,color:"#1a3a5a"}}>Score threshold: {settings.scoreThreshold}/10 · {settings.stockTier}</div>
+                <div style={{fontSize:9,lineHeight:1.8,color:"#5f86a8"}}>Score threshold: {settings.scoreThreshold}/10 · {settings.stockTier}</div>
                 {settings.niftyFilter&&niftyDir!==0&&<div style={{fontSize:9,marginTop:6,color:niftyDir>0?"#00e676":"#ff5252"}}>{niftyDir>0?"🟢 Nifty +ve — BUYs favored":"🔴 Nifty -ve — SELLs favored"}</div>}
               </div>
             )}
@@ -957,31 +983,31 @@ function FCBBotV6(){
         {tab==="trades"&&(
           <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:9,color:"#2a4a6a",letterSpacing:1}}>TODAY'S TRADES ({trades.length})</div>
+              <div style={{fontSize:9,color:"#6f95b8",letterSpacing:1}}>TODAY'S TRADES ({trades.length})</div>
               {trades.length>0&&<button onClick={clearTrades} style={{padding:"4px 10px",background:"rgba(255,82,82,0.08)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:7,color:"#ff5252",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 CLEAR</button>}
             </div>
-            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#1a3a5a"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t}/>)}
+            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#5f86a8"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t}/>)}
           </>
         )}
 
         {/* ── LOG TAB ── */}
         {tab==="log"&&(
-          <div>
+          <div style={{paddingBottom:62}}>
             {/* Date + filter row — sticky so it stays visible while log scrolls */}
             <div style={{position:"sticky",top:0,zIndex:10,background:"#070d16",paddingBottom:6}}>
             <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
-              <span style={{fontSize:8,color:"#2a4a6a",flexShrink:0}}>📅</span>
+              <span style={{fontSize:8,color:"#6f95b8",flexShrink:0}}>📅</span>
               <select value={logDate} onChange={e=>{setLogDate(e.target.value);setLogs([]);}} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"5px 8px",color:"#c8ddf0",fontSize:9,fontFamily:"'Share Tech Mono',monospace",outline:"none"}}>
                 <option value="today">Today</option>
                 {logDates.filter(d=>d!==new Date().toISOString().split("T")[0]).map(d=><option key={d} value={d}>{d}</option>)}
               </select>
-              <span style={{fontSize:8,color:"#1a3a5a",flexShrink:0}}>{logs.length} lines</span>
+              <span style={{fontSize:8,color:"#5f86a8",flexShrink:0}}>{logs.length} lines</span>
             </div>
 
             {/* Filter chips */}
             <div style={{display:"flex",gap:3,marginBottom:8,overflowX:"auto",paddingBottom:2}}>
               {[["all","ALL",logs.length],["trade","⚡ TRADE",logs.filter(l=>["TRADE","SIGNAL"].includes(l.type.toUpperCase())||l.msg.includes("TARGET")||l.msg.includes("STOPPED")||l.msg.includes("PAPER")).length],["scan","📡 SCAN",logs.filter(l=>l.type.toUpperCase()==="SCAN"||l.msg.includes("Scan:")||l.msg.includes("SIGNAL")).length],["error","⚠️ ERR",logs.filter(l=>["ERROR","WARN"].includes(l.type.toUpperCase())).length],["status","🕐 STATUS",logs.filter(l=>l.type.toUpperCase()==="STATUS").length]].map(([k,l,cnt])=>(
-                <button key={k} onClick={()=>setLogFilter(k)} style={{flexShrink:0,padding:"3px 9px",borderRadius:5,border:`1px solid ${logFilter===k?"rgba(0,180,255,0.5)":"rgba(255,255,255,0.06)"}`,background:logFilter===k?"rgba(0,180,255,0.12)":"transparent",color:logFilter===k?"#00b4ff":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:logFilter===k?700:400}}>
+                <button key={k} onClick={()=>setLogFilter(k)} style={{flexShrink:0,padding:"3px 9px",borderRadius:5,border:`1px solid ${logFilter===k?"rgba(0,180,255,0.5)":"rgba(255,255,255,0.06)"}`,background:logFilter===k?"rgba(0,180,255,0.12)":"transparent",color:logFilter===k?"#00b4ff":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:logFilter===k?700:400}}>
                   {l}{cnt>0&&<span style={{marginLeft:4,background:logFilter===k?"rgba(0,180,255,0.2)":"rgba(255,255,255,0.06)",padding:"0 4px",borderRadius:8,fontSize:7}}>{cnt}</span>}
                 </button>
               ))}
@@ -993,9 +1019,9 @@ function FCBBotV6(){
               onScroll={e=>{const el=e.currentTarget;autoScrollRef.current=el.scrollHeight-el.scrollTop-el.clientHeight<50;}}
               style={{background:"rgba(0,0,0,0.45)",borderRadius:10,padding:"10px 11px",minHeight:200,overflowY:"visible",border:"1px solid rgba(255,255,255,0.04)",marginBottom:10,fontFamily:"'Share Tech Mono',monospace",fontSize:9}}
             >
-              {filteredLogs.length===0?<div style={{color:"#1a3a5a",textAlign:"center",marginTop:30}}>{logs.length===0?"Waiting for bot logs...":"No entries match filter"}</div>:
+              {filteredLogs.length===0?<div style={{color:"#5f86a8",textAlign:"center",marginTop:30}}>{logs.length===0?"Waiting for bot logs...":"No entries match filter"}</div>:
                 filteredLogs.map((l,i)=>{
-                  const col=l.type.toUpperCase()==="SIGNAL"?"#ffd54f":l.type.toUpperCase()==="TRADE"?"#00e676":l.type.toUpperCase()==="ERROR"?"#ff5252":l.type.toUpperCase()==="WARN"?"#ff9800":l.type.toUpperCase()==="STATUS"?"#2a5a8a":"#3a6a8a";
+                  const col=l.type.toUpperCase()==="SIGNAL"?"#ffd54f":l.type.toUpperCase()==="TRADE"?"#00e676":l.type.toUpperCase()==="ERROR"?"#ff5252":l.type.toUpperCase()==="WARN"?"#ff9800":l.type.toUpperCase()==="STATUS"?"#2a5a8a":"#79a7c7";
                   const bg=l.type.toUpperCase()==="SIGNAL"?"rgba(255,213,64,0.04)":l.type.toUpperCase()==="TRADE"?"rgba(0,230,118,0.03)":l.type.toUpperCase()==="ERROR"?"rgba(255,82,82,0.04)":"transparent";
                   return(<div key={i} style={{color:col,background:bg,borderRadius:3,padding:"2px 3px",marginBottom:3,lineHeight:1.6}}><span style={{color:"#80d8ff",fontSize:8}}>[{l.ts}]</span> {l.msg}</div>);
                 })
@@ -1003,12 +1029,12 @@ function FCBBotV6(){
               <div ref={logEndRef}/>
             </div>
 
-            {/* Download row — single click, server handles everything */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+            {/* Download row — fixed at bottom for quick access */}
+            <div style={{position:"fixed",left:"50%",transform:"translateX(-50%)",bottom:8,width:"min(420px,calc(100vw - 20px))",display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,padding:"7px 8px",background:"rgba(7,13,22,0.94)",backdropFilter:"blur(4px)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,zIndex:40}}>
               {[["TXT","txt","#00b4ff"],["CSV","csv","#00e676"],["JSON","json","#ffd54f"]].map(([label,fmt,color])=>(
                 <a key={fmt} href={`/api/logs/download?format=${fmt}&date=${logDate}`} download style={{display:"block",padding:"8px 0",background:`${color}10`,border:`1px solid ${color}25`,borderRadius:7,color:color,fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none"}}>📥 {label}</a>
               ))}
-              <button onClick={()=>{setLogs([]);fetchLogsFromServer(logDate);}} style={{padding:"8px 0",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:7,color:"#4a7a9a",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🔄 RELOAD</button>
+              <button onClick={()=>{setLogs([]);fetchLogsFromServer(logDate);}} style={{padding:"8px 0",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:7,color:"#8bb7d3",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🔄 RELOAD</button>
             </div>
           </div>
         )}
@@ -1018,7 +1044,7 @@ function FCBBotV6(){
           <div>
             {/* Bot control */}
             <div style={{background:botStopped?"rgba(255,82,82,0.07)":"rgba(0,230,118,0.05)",border:`1px solid ${botStopped?"rgba(255,82,82,0.25)":"rgba(0,230,118,0.15)"}`,borderRadius:12,padding:13,marginBottom:12}}>
-              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:8}}>🤖 BOT CONTROL</div>
+              <div style={{fontSize:9,color:"#8bb7d3",marginBottom:8}}>🤖 BOT CONTROL</div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,color:botStopped?"#ff5252":"#00e676",fontWeight:700}}>{botStopped?"🛑 STOPPED":"▶️ RUNNING"}</div>
                 {botStopped?(
@@ -1031,7 +1057,7 @@ function FCBBotV6(){
 
             {/* Session */}
             <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:13,marginBottom:12}}>
-              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:8}}>🔑 SESSION</div>
+              <div style={{fontSize:9,color:"#8bb7d3",marginBottom:8}}>🔑 SESSION</div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <div style={{color:"#ddeeff",fontSize:12,fontWeight:700}}>{profile?.user_name}</div>
                 <button onClick={logout} style={{padding:"6px 11px",background:"rgba(255,82,82,0.1)",border:"1px solid rgba(255,82,82,0.25)",borderRadius:7,color:"#ff5252",fontSize:9,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🚪 LOGOUT</button>
@@ -1047,7 +1073,7 @@ function FCBBotV6(){
 
             {/* Risk settings */}
             <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:12,padding:13,marginBottom:12}}>
-              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:10}}>⚡ RISK SETTINGS</div>
+              <div style={{fontSize:9,color:"#8bb7d3",marginBottom:10}}>⚡ RISK SETTINGS</div>
               {[
                 {key:"riskPct",      label:"Risk Per Trade (%)",    suffix:"%",   min:0.1,max:10, step:0.1},
                 {key:"dailyLossLimit",label:"Daily Loss Limit (₹)", prefix:"₹",  min:0,          step:50},
@@ -1057,9 +1083,9 @@ function FCBBotV6(){
                 <div key={key} style={{marginBottom:12}}>
                   <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>{label}</div>
                   <div style={{display:"flex",alignItems:"center",gap:7}}>
-                    {prefix&&<span style={{color:"#4a7a9a"}}>{prefix}</span>}
+                    {prefix&&<span style={{color:"#8bb7d3"}}>{prefix}</span>}
                     <input type="number" value={settings[key]} onChange={e=>setSettings(s=>({...s,[key]:parseFloat(e.target.value)||min}))} min={min} max={max} step={step||1} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"8px 10px",color:"#ddeeff",fontSize:12,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
-                    {suffix&&<span style={{color:"#4a7a9a",fontSize:10}}>{suffix}</span>}
+                    {suffix&&<span style={{color:"#8bb7d3",fontSize:10}}>{suffix}</span>}
                   </div>
                 </div>
               ))}
@@ -1069,7 +1095,7 @@ function FCBBotV6(){
                 <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>📊 Stock Universe</div>
                 <div style={{display:"flex",gap:4}}>
                   {[["tier1","T1 (~47)"],["tier1+2","T1+2 (~77)"],["all","All (~107)"]].map(([v,l])=>(
-                    <button key={v} onClick={()=>setSettings(s=>({...s,stockTier:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.stockTier===v?"rgba(0,180,255,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.stockTier===v?"rgba(0,180,255,0.12)":"transparent",color:settings.stockTier===v?"#00b4ff":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.stockTier===v?700:400}}>{l}</button>
+                    <button key={v} onClick={()=>setSettings(s=>({...s,stockTier:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.stockTier===v?"rgba(0,180,255,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.stockTier===v?"rgba(0,180,255,0.12)":"transparent",color:settings.stockTier===v?"#00b4ff":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.stockTier===v?700:400}}>{l}</button>
                   ))}
                 </div>
               </div>
@@ -1079,7 +1105,7 @@ function FCBBotV6(){
                 <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>🔍 Nifty Direction Filter</div>
                 <div style={{display:"flex",gap:4}}>
                   {[[true,"ON (Recommended)"],[false,"OFF"]].map(([v,l])=>(
-                    <button key={String(v)} onClick={()=>setSettings(s=>({...s,niftyFilter:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.niftyFilter===v?"rgba(0,230,118,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.niftyFilter===v?"rgba(0,230,118,0.1)":"transparent",color:settings.niftyFilter===v?"#00e676":"#2a4a6a",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.niftyFilter===v?700:400}}>{l}</button>
+                    <button key={String(v)} onClick={()=>setSettings(s=>({...s,niftyFilter:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.niftyFilter===v?"rgba(0,230,118,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.niftyFilter===v?"rgba(0,230,118,0.1)":"transparent",color:settings.niftyFilter===v?"#00e676":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.niftyFilter===v?700:400}}>{l}</button>
                   ))}
                 </div>
               </div>
@@ -1089,7 +1115,7 @@ function FCBBotV6(){
 
             {/* Data management */}
             <div style={{background:"rgba(255,255,255,0.01)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:12,padding:13}}>
-              <div style={{fontSize:9,color:"#4a7a9a",marginBottom:10}}>🗃 DATA</div>
+              <div style={{fontSize:9,color:"#8bb7d3",marginBottom:10}}>🗃 DATA</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}}>
                 <button onClick={clearTrades} style={{padding:"9px",background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:7,color:"#ffd54f",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🗑 CLEAR TRADES</button>
                 <button onClick={()=>{if(window.confirm("Clear today's log display?")){setLogs([]);}}} style={{padding:"9px",background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:7,color:"#ffd54f",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}>🗑 CLEAR LOGS</button>
