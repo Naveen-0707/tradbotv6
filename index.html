@@ -575,14 +575,7 @@ function FCBBotV6(){
               setNiftyLtp(+ltp.toFixed(2));
               if(cp)setNiftyChg(+(((ltp-cp)/cp)*100).toFixed(2));
             }
-            // Update live trade P&L
-            setTrades(prev=>prev.map(t=>{
-              if(t.status!=="OPEN"&&t.status!=="PAPER")return t;
-              // Find stock key from STRAT_CFG (we don't have key here, use name)
-              // LTP matching by name is not possible from index feed
-              // Paper OCO simulation runs in bot.js — just display what bot sent
-              return t;
-            }));
+            // Trade LTP / Live P&L comes from bot.js via /events trades stream.
           }
         }catch{}
       };
@@ -778,15 +771,16 @@ function FCBBotV6(){
       <div style={{zIndex:20,background:"rgba(7,13,22,0.97)",backdropFilter:"blur(16px)",borderBottom:"1px solid rgba(255,255,255,0.05)",padding:"8px 14px 0"}}>
 
         {/* ── ROW 1: Title + Nifty ── */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3,gap:8,minWidth:0}}>
+          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"nowrap",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
             ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
             {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s}/>)}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
             {niftyLtp&&(
-              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#8bb7d3",fontWeight:700}}>
-                {niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}{niftyChg!=null&&<span style={{fontSize:8}}> ({niftyChg>0?"+":""}{niftyChg}%)</span>}
+              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#8bb7d3",fontWeight:700,display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+                <span>{niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}</span>
+                {niftyChg!=null&&<span style={{fontSize:8,whiteSpace:"nowrap"}}>({niftyChg>0?"+":""}{Number(niftyChg).toFixed(2)}%)</span>}
               </div>
             )}
             {notifPerm!=="granted"&&<button onClick={()=>window.FCBNotify?.request().then(ok=>setNotifPerm(ok?"granted":"denied"))} style={{background:"none",border:"1px solid rgba(0,180,255,0.3)",borderRadius:4,padding:"1px 5px",color:"#00b4ff",fontSize:7,cursor:"pointer"}}>🔔</button>}

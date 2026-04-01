@@ -250,10 +250,17 @@ setInterval(getOrCreateLogWatcher, 60000);
 
 // ─── TRADES FILE WATCHER ─────────────────────────────────────────────────────
 let lastTradeCount = -1;
+let lastTradesMtimeMs = 0;
 fs.watchFile(TRD_FILE, { interval: 2000 }, () => {
   const trades = readJSON(TRD_FILE, []);
-  if (trades.length !== lastTradeCount) {
+  let mtimeMs = 0;
+  try { mtimeMs = fs.statSync(TRD_FILE).mtimeMs || 0; } catch {}
+
+  // Push trade updates when file content changes (not only when count changes),
+  // so UI can refresh live LTP / Live P&L for open trades.
+  if (trades.length !== lastTradeCount || mtimeMs !== lastTradesMtimeMs) {
     lastTradeCount = trades.length;
+    lastTradesMtimeMs = mtimeMs;
     sseWrite({ type: "trades", trades });
   }
 });
