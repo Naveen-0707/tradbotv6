@@ -33,6 +33,7 @@ const { spawn, exec } = require("child_process");
 const PORT = 8080;
 const DIR  = __dirname;
 const MAX_API_BODY_BYTES = 1_000_000; // 1 MB safeguard against oversized JSON payloads
+const APP_VERSION = "6.1.0";
 const ADMIN_KEY = (process.env.FCB_ADMIN_KEY || "").trim();
 const ALLOWED_ORIGINS = (process.env.FCB_ALLOWED_ORIGINS || "http://localhost:8080,http://127.0.0.1:8080")
   .split(",")
@@ -120,6 +121,7 @@ function istDateStr(d) {
 }
 
 function todayStr() { return istDateStr(); }
+function processUptimeSec() { return Math.floor(process.uptime()); }
 
 // ─── PER-DAY LOG FILE RESOLUTION ─────────────────────────────────────────────
 // Bot writes: fcb_log_YYYY-MM-DD.txt
@@ -251,7 +253,7 @@ setInterval(getOrCreateLogWatcher, 60000);
 // ─── TRADES FILE WATCHER ─────────────────────────────────────────────────────
 let lastTradeCount = -1;
 let lastTradesMtimeMs = 0;
-fs.watchFile(TRD_FILE, { interval: 2000 }, () => {
+fs.watchFile(TRD_FILE, { interval: 5000 }, () => {
   const trades = readJSON(TRD_FILE, []);
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(TRD_FILE).mtimeMs || 0; } catch {}
@@ -481,7 +483,7 @@ const server = http.createServer((req, res) => {
             return json(res, { ok: false, error: "cmd must be a non-empty string" }, 400);
           }
           // BUG #8 FIX: "clear_trades" now in allowed list
-          const allowed = ["stop", "resume", "scan", "reload_token", "reload_settings", "clear_trades", "manual_paper"];
+          const allowed = ["stop", "resume", "scan", "reload_token", "reload_settings", "clear_trades", "delete_trades", "manual_paper"];
           if (!allowed.includes(cmd))
             return json(res, { ok: false, error: `Unknown command '${cmd}'` }, 400);
 
@@ -506,9 +508,18 @@ const server = http.createServer((req, res) => {
             }
           }
 
+          if (cmd === "delete_trades") {
+            const idx = parsed.indexes;
+            if (!Array.isArray(idx) || idx.length === 0 ||
+                idx.some(n => !Number.isInteger(n) || n < 0)) {
+              return json(res, { ok: false, error: "indexes must be a non-empty array of non-negative integers" }, 400);
+            }
+          }
+
           const cmdObj = { cmd, ts: Date.now() };
           if (strats) cmdObj.strats = strats;
           if (cmd === "manual_paper" && parsed.trade) cmdObj.trade = parsed.trade;
+          if (cmd === "delete_trades" && parsed.indexes) cmdObj.indexes = parsed.indexes;
           await writeJSONAsync(CMD_FILE, cmdObj);
           console.log(Y(`📨 Command → bot: ${cmd}`));
 
@@ -530,13 +541,30 @@ const server = http.createServer((req, res) => {
         // ── DELETE /api/trades ───────────────────────────────────────────
         if (req.method === "DELETE" && urlPath === "/api/trades") {
           if (!requireAdmin(req, res)) return;
-          // Also send clear_trades command to bot so in-memory state clears
+          const currentTrades = await readJSONAsync(TRD_FILE, []);
+          const idx = parsed.indexes;
+
+          // Mode 1: selective delete by indexes
+          if (idx !== undefined) {
+            if (!Array.isArray(idx) || idx.length === 0 ||
+                idx.some(n => !Number.isInteger(n) || n < 0 || n >= currentTrades.length)) {
+              return json(res, { ok: false, error: "indexes must be valid trade indexes within current trade list" }, 400);
+            }
+            const toDelete = new Set(idx);
+            const nextTrades = currentTrades.filter((_, i) => !toDelete.has(i));
+            await writeJSONAsync(TRD_FILE, nextTrades);
+            await writeJSONAsync(CMD_FILE, { cmd: "delete_trades", indexes: [...toDelete], ts: Date.now() });
+            sseWrite({ type: "trades", trades: nextTrades });
+            return json(res, { ok: true, deleted: toDelete.size, remaining: nextTrades.length });
+          }
+
+          // Mode 2: clear all (legacy behavior)
           await writeJSONAsync(TRD_FILE,  []);
           await writeJSONAsync(SIG_FILE,  []);
           await writeJSONAsync(CMD_FILE, { cmd: "clear_trades", ts: Date.now() });
           sseWrite({ type: "trades",  trades:  [] });
           sseWrite({ type: "signals", signals: [] });
-          return json(res, { ok: true });
+          return json(res, { ok: true, deleted: currentTrades.length, remaining: 0 });
         }
 
         // ── GET /api/signals ─────────────────────────────────────────────
@@ -549,6 +577,7 @@ const server = http.createServer((req, res) => {
           const cfg = await readJSONAsync(CFG_FILE, {});
           return json(res, {
             running:        true,
+            version:        APP_VERSION,
             paperMode:      cfg.paperMode       !== false,
             wallet:         cfg.wallet          || 5000,
             riskPct:        cfg.riskPct         || 2,
@@ -558,6 +587,25 @@ const server = http.createServer((req, res) => {
             stockTier:      cfg.stockTier       || "tier1+2",
             niftyFilter:    cfg.niftyFilter     !== false,
             currentLogFile: path.basename(todayLogFile()),
+          });
+        }
+
+        // ── GET /api/health ──────────────────────────────────────────────
+        // Lightweight operational endpoint for uptime monitors and scripts.
+        if (req.method === "GET" && urlPath === "/api/health") {
+          const mem = process.memoryUsage();
+          return json(res, {
+            ok: true,
+            status: "healthy",
+            version: APP_VERSION,
+            uptimeSec: processUptimeSec(),
+            nowIso: new Date().toISOString(),
+            memory: {
+              rss: mem.rss,
+              heapTotal: mem.heapTotal,
+              heapUsed: mem.heapUsed,
+              external: mem.external,
+            },
           });
         }
 
