@@ -251,8 +251,7 @@ setInterval(getOrCreateLogWatcher, 60000);
 // ─── TRADES FILE WATCHER ─────────────────────────────────────────────────────
 let lastTradeCount = -1;
 let lastTradesMtimeMs = 0;
-// Keep trade refresh slower than index-tick frequency; 5s matches paper OCO refresh cadence.
-fs.watchFile(TRD_FILE, { interval: 5000 }, () => {
+fs.watchFile(TRD_FILE, { interval: 2000 }, () => {
   const trades = readJSON(TRD_FILE, []);
   let mtimeMs = 0;
   try { mtimeMs = fs.statSync(TRD_FILE).mtimeMs || 0; } catch {}
