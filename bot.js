@@ -466,8 +466,7 @@ async function simulatePaperOCO() {
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
-    const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(trade.name.toUpperCase()));
-    const ltp = ltpEntry?.[1]?.last_price;
+    const ltp = ltpData?.[key]?.last_price;
     if (!ltp) continue;
 
     // log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO");
@@ -1138,7 +1137,11 @@ function watchCMD() {
           break;
 
         case "delete_trades":
-          if (Array.isArray(cmd.indexes) && cmd.indexes.length > 0) {
+          if (Array.isArray(cmd.trades)) {
+            trades = cmd.trades;
+            saveTrades();
+            log(`🗑 Synced selected-delete state from bridge (${trades.length} trade(s) remain)`, "INFO");
+          } else if (Array.isArray(cmd.indexes) && cmd.indexes.length > 0) {
             const toDelete = new Set(
               cmd.indexes.filter(n => Number.isInteger(n) && n >= 0 && n < trades.length)
             );

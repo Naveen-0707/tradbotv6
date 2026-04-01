@@ -553,7 +553,12 @@ const server = http.createServer((req, res) => {
             const toDelete = new Set(idx);
             const nextTrades = currentTrades.filter((_, i) => !toDelete.has(i));
             await writeJSONAsync(TRD_FILE, nextTrades);
-            await writeJSONAsync(CMD_FILE, { cmd: "delete_trades", indexes: [...toDelete], ts: Date.now() });
+            await writeJSONAsync(CMD_FILE, {
+              cmd: "delete_trades",
+              indexes: [...toDelete],
+              trades: nextTrades,
+              ts: Date.now(),
+            });
             sseWrite({ type: "trades", trades: nextTrades });
             return json(res, { ok: true, deleted: toDelete.size, remaining: nextTrades.length });
           }
