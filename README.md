@@ -35,3 +35,10 @@ node tests/indicators.smoke.js
 node tests/strategies.smoke.js
 node tests/bridge.api.smoke.js
 ```
+
+## New in v6.1
+
+- `GET /api/status` now includes a `version` field.
+- Added `GET /api/health` for monitoring with uptime + memory stats.
+- Trades tab supports deleting selected trades (`🗑 SELECTED`) or full clear (`🗑 CLEAR ALL`).
+- `DELETE /api/trades` supports `{ "indexes": [ ... ] }` for selective deletion.
