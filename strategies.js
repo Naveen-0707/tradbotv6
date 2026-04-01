@@ -938,8 +938,8 @@ const SCHEDULE = [
   { from: 560, to: 575, label: "FCB + GAP",      strategies: ["FCB", "GAP"],                blocked: false, scanInterval: 1 },
   { from: 575, to: 690, label: "ORB + BB",        strategies: ["ORB", "BB_SQZ"],             blocked: false, scanInterval: 2 },
   { from: 690, to: 810, label: "VWAP + ST_MACD",  strategies: ["VWAP", "ST_MACD"],           blocked: false, scanInterval: 3 },
-  { from: 810, to: 870, label: "EMA + ADX",        strategies: ["EMA", "ADX_EMA"],            blocked: false, scanInterval: 3 },
-  { from: 870, to: 920, label: "VWAP + RSI_DIV",   strategies: ["VWAP", "RSI_DIV"],           blocked: false, scanInterval: 2 },
+  { from: 810, to: 870, label: "EMA + ADX + VWAP", strategies: ["EMA", "ADX_EMA", "VWAP"],    blocked: false, scanInterval: 3 },
+  { from: 870, to: 920, label: "VWAP + RSI + ST_MACD", strategies: ["VWAP", "RSI_DIV", "ST_MACD"], blocked: false, scanInterval: 2 },
   { from: 920, to: 930, label: "CLOSED",           strategies: [],                             blocked: true,  scanInterval: 0 },
 ];
 
