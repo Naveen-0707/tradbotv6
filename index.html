@@ -66,8 +66,8 @@ const SCHEDULE=[
   {from:560,to:575, label:"FCB + GAP",      strategies:["FCB","GAP"],         blocked:false,color:"#00b4ff",emoji:"🔷"},
   {from:575,to:690, label:"ORB + BB_SQZ",   strategies:["ORB","BB_SQZ"],      blocked:false,color:"#ffd54f",emoji:"📊"},
   {from:690,to:810, label:"VWAP + ST_MACD", strategies:["VWAP","ST_MACD"],    blocked:false,color:"#00e5ff",emoji:"💧"},
-  {from:810,to:870, label:"EMA + ADX_EMA",  strategies:["EMA","ADX_EMA"],     blocked:false,color:"#69f0ae",emoji:"📈"},
-  {from:870,to:920, label:"VWAP + RSI_DIV", strategies:["VWAP","RSI_DIV"],    blocked:false,color:"#b388ff",emoji:"📉"},
+  {from:810,to:870, label:"EMA + ADX + VWAP", strategies:["EMA","ADX_EMA","VWAP"], blocked:false,color:"#69f0ae",emoji:"📈"},
+  {from:870,to:920, label:"VWAP + RSI + ST_MACD", strategies:["VWAP","RSI_DIV","ST_MACD"], blocked:false,color:"#b388ff",emoji:"📉"},
   {from:920,to:930, label:"CLOSED",         strategies:[],                    blocked:true, color:"#ff5252",emoji:"🛑"},
 ];
 function getSchedule(m){
