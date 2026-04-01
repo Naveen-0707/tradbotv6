@@ -298,7 +298,7 @@ const placeSL = (ik, tx, qty, trigger) => placeOrd({
 });
 
 const getOrderStatus = (id) =>
-  fetchR(API_HOST, `/v2/order/details?order_id=${id}`, "GET", authH())
+  fetchR(API_HOST, `/v3/order/details?order_id=${id}`, "GET", authH())
     .then(r => r.data?.data);
 
 const cancelOrder = (id) =>
