@@ -456,9 +456,9 @@ async function simulatePaperOCO() {
   if (keys.length === 0) return;
 
   const ltpData = await fetchEquityLTP(keys);
-  log(`🔍 keyMap key: ${Object.keys(keyMap)[0]}`, "INFO");
-  log(`🔍 ltpData key: ${Object.keys(ltpData)[0]}`, "INFO");
-  log(`Paper OCO: open=${open.length} keys=${keys.length} ltpResults=${Object.keys(ltpData).length}`, "INFO");
+  // log(`🔍 keyMap key: ${Object.keys(keyMap)[0]}`, "INFO");
+  // log(`🔍 ltpData key: ${Object.keys(ltpData)[0]}`, "INFO");
+  // log(`Paper OCO: open=${open.length} keys=${keys.length} ltpResults=${Object.keys(ltpData).length}`, "INFO");
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
@@ -466,7 +466,7 @@ async function simulatePaperOCO() {
     const ltp = ltpEntry?.[1]?.last_price;
     if (!ltp) continue;
 
-    log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO"); // ← ADD THIS
+    // log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO");
 
     // Update live P&L display
     trade.ltp     = +ltp.toFixed(2);
@@ -519,7 +519,7 @@ async function simulatePaperOCO() {
 
     const targetHit = trade.direction === "BUY" ? ltp >= trade.target : ltp <= trade.target;
     const slHit     = trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl;
-    log(`🔍 ${trade.name} targetHit=${targetHit} slHit=${slHit}`, "INFO");
+    // log(`🔍 ${trade.name} targetHit=${targetHit} slHit=${slHit}`, "INFO");
 
     if (targetHit) {
       const charges = COSTS() * 2;
@@ -703,6 +703,7 @@ async function execTrade(signal) {
 
   const record = {
     ...signal,
+    instrumentKey: stock?.key || null,
     qty,
     date:    todayStr(),
     time:    istTime(),
@@ -1114,8 +1115,10 @@ function watchCMD() {
         case "manual_paper":
           if (cmd.trade) {
             const t = cmd.trade;
+            const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+            const stock = allStockList.find(s => s.name === t.name);
             if (!hasOpenPosition(t.name, trades)) {
-              trades.push({ ...t, paper: true, status: "PAPER" });
+              trades.push({ ...t, instrumentKey: t.instrumentKey || stock?.key || null, paper: true, status: "PAPER" });
               saveTrades();
               log(`📝 UI Paper synced: ${t.direction} ${t.qty}× ${t.name}`, "TRADE");
             }

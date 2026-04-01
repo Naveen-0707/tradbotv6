@@ -187,9 +187,25 @@ function StratBreakdown({confirmedBy,scoreBreakdown}){
 }
 
 // ── STRATEGY BADGE ────────────────────────────────────────────────────────
-function SBadge({strat}){
+function SBadge({strat,compact=false}){
   const cfg=STRAT_CFG[strat]||{label:strat,color:"#888",emoji:"•"};
-  return(<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:`${cfg.color}15`,border:`1px solid ${cfg.color}40`,color:cfg.color,fontFamily:"'Share Tech Mono',monospace",marginLeft:6}}>{cfg.emoji} {cfg.label}</span>);
+  return(
+    <span
+      style={{
+        fontSize:compact?7:8,
+        padding:compact?"1px 5px":"2px 6px",
+        borderRadius:4,
+        background:`${cfg.color}15`,
+        border:`1px solid ${cfg.color}40`,
+        color:cfg.color,
+        fontFamily:"'Share Tech Mono',monospace",
+        marginLeft:compact?4:6,
+        letterSpacing:compact?0.4:0
+      }}
+    >
+      {cfg.emoji} {cfg.label}
+    </span>
+  );
 }
 
 // ── TIMELINE BAR ──────────────────────────────────────────────────────────
@@ -412,9 +428,30 @@ function FCBBotV6(){
   const wsRef = useRef(null);
   const wsReconnRef = useRef(null);
   const wsReconnectDelayRef = useRef(5000);
+  const wsSubKeysRef = useRef([]);
   const ocoRef=useRef(null);
   const logEndRef=useRef(null);
   const autoScrollRef=useRef(true);
+
+  const extractFeedLtp=feed=>{
+    return feed?.fullFeed?.indexFF?.ltpc?.ltp
+      ?? feed?.fullFeed?.marketFF?.ltpc?.ltp
+      ?? feed?.ltpc?.ltp
+      ?? null;
+  };
+
+  const syncWSSubscriptions=useCallback((ws,tradeList=[])=>{
+    if(!ws||ws.readyState!==WebSocket.OPEN)return;
+    const tradeKeys=tradeList
+      .filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.instrumentKey)
+      .map(t=>t.instrumentKey);
+    const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank",...tradeKeys];
+    const uniq=[...new Set(keys)];
+    if(JSON.stringify(uniq)===JSON.stringify(wsSubKeysRef.current))return;
+    wsSubKeysRef.current=uniq;
+    const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:uniq}});
+    ws.send(new TextEncoder().encode(sub));
+  },[]);
 
   // ── HELPERS ──────────────────────────────────────────────────────────────
   const addAlert=useCallback((msg,type="info")=>{
@@ -555,10 +592,8 @@ function FCBBotV6(){
         setWsStatus("connected");
         wsReconnectDelayRef.current = 5000;
         
-        // Subscribe to Nifty for direction display
-        const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank"];
-        const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:keys}});
-        ws.send(new TextEncoder().encode(sub));
+        // Subscribe to Nifty + open trades (for live LTP/P&L updates at WS tick cadence)
+        syncWSSubscriptions(ws,trades);
         ws._lp=Date.now();
         hb=setInterval(()=>{if(Date.now()-ws._lp>90000){ws.close();}},5000);
       };
@@ -575,13 +610,18 @@ function FCBBotV6(){
               setNiftyLtp(+ltp.toFixed(2));
               if(cp)setNiftyChg(+(((ltp-cp)/cp)*100).toFixed(2));
             }
-            // Update live trade P&L
             setTrades(prev=>prev.map(t=>{
               if(t.status!=="OPEN"&&t.status!=="PAPER")return t;
-              // Find stock key from STRAT_CFG (we don't have key here, use name)
-              // LTP matching by name is not possible from index feed
-              // Paper OCO simulation runs in bot.js — just display what bot sent
-              return t;
+              if(!t.instrumentKey)return t;
+              const feed=msg.feeds[t.instrumentKey];
+              if(!feed)return t;
+              const ltpVal=extractFeedLtp(feed);
+              if(!ltpVal)return t;
+              const ltp=+Number(ltpVal).toFixed(2);
+              const livePnl=+(
+                (t.direction==="BUY"?ltp-t.entry:t.entry-ltp)*(t.qty||0)
+              ).toFixed(0);
+              return {...t,ltp,livePnl};
             }));
           }
         }catch{}
@@ -599,7 +639,12 @@ function FCBBotV6(){
       };
       wsRef.current=ws;
     }catch(e){setWsStatus("disconnected");wsReconnRef.current=setTimeout(()=>connectWS(tkn),30000);}
-  },[]);
+  },[syncWSSubscriptions]);
+
+  useEffect(()=>{
+    const ws=wsRef.current;
+    if(ws&&ws.readyState===WebSocket.OPEN)syncWSSubscriptions(ws,trades);
+  },[trades,syncWSSubscriptions]);
 
   useEffect(()=>{
     if(!token||!profile)return;
@@ -778,15 +823,18 @@ function FCBBotV6(){
       <div style={{zIndex:20,background:"rgba(7,13,22,0.97)",backdropFilter:"blur(16px)",borderBottom:"1px solid rgba(255,255,255,0.05)",padding:"8px 14px 0"}}>
 
         {/* ── ROW 1: Title + Nifty ── */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
-            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s}/>)}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3,gap:8,minWidth:0}}>
+          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:4,flexWrap:"nowrap",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
+            <span style={{whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:4,flexShrink:0}}>
+              ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
+            </span>
+            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s} compact/>)}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
             {niftyLtp&&(
-              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#8bb7d3",fontWeight:700}}>
-                {niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}{niftyChg!=null&&<span style={{fontSize:8}}> ({niftyChg>0?"+":""}{niftyChg}%)</span>}
+              <div style={{fontSize:10,fontFamily:"'Share Tech Mono',monospace",color:niftyDir>0?"#00e676":niftyDir<0?"#ff5252":"#8bb7d3",fontWeight:700,display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}>
+                <span>{niftyDir>0?"🟢":niftyDir<0?"🔴":"⚪"} {niftyLtp?.toLocaleString("en-IN")}</span>
+                {niftyChg!=null&&<span style={{fontSize:8,whiteSpace:"nowrap"}}>({niftyChg>0?"+":""}{Number(niftyChg).toFixed(2)}%)</span>}
               </div>
             )}
             {notifPerm!=="granted"&&<button onClick={()=>window.FCBNotify?.request().then(ok=>setNotifPerm(ok?"granted":"denied"))} style={{background:"none",border:"1px solid rgba(0,180,255,0.3)",borderRadius:4,padding:"1px 5px",color:"#00b4ff",fontSize:7,cursor:"pointer"}}>🔔</button>}
