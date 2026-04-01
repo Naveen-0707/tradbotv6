@@ -992,7 +992,7 @@ function FCBBotV6(){
 
         {/* ── LOG TAB ── */}
         {tab==="log"&&(
-          <div>
+          <div style={{paddingBottom:62}}>
             {/* Date + filter row — sticky so it stays visible while log scrolls */}
             <div style={{position:"sticky",top:0,zIndex:10,background:"#070d16",paddingBottom:6}}>
             <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>
@@ -1029,8 +1029,8 @@ function FCBBotV6(){
               <div ref={logEndRef}/>
             </div>
 
-            {/* Download row — single click, server handles everything */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6}}>
+            {/* Download row — fixed at bottom for quick access */}
+            <div style={{position:"fixed",left:"50%",transform:"translateX(-50%)",bottom:8,width:"min(420px,calc(100vw - 20px))",display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,padding:"7px 8px",background:"rgba(7,13,22,0.94)",backdropFilter:"blur(4px)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,zIndex:40}}>
               {[["TXT","txt","#00b4ff"],["CSV","csv","#00e676"],["JSON","json","#ffd54f"]].map(([label,fmt,color])=>(
                 <a key={fmt} href={`/api/logs/download?format=${fmt}&date=${logDate}`} download style={{display:"block",padding:"8px 0",background:`${color}10`,border:`1px solid ${color}25`,borderRadius:7,color:color,fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer",textAlign:"center",textDecoration:"none"}}>📥 {label}</a>
               ))}
