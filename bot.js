@@ -448,6 +448,10 @@ async function simulatePaperOCO() {
   const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
   const keyMap = {};
   for (const trade of open) {
+    if (trade.instrumentKey) {
+      keyMap[trade.instrumentKey] = trade;
+      continue;
+    }
     const s = allStockList.find(x => x.name === trade.name);
     if (s) keyMap[s.key] = trade;
   }
@@ -462,8 +466,7 @@ async function simulatePaperOCO() {
   let changed = false;
 
   for (const [key, trade] of Object.entries(keyMap)) {
-    const ltpEntry = Object.entries(ltpData).find(([k]) => k.toUpperCase().includes(trade.name.toUpperCase()));
-    const ltp = ltpEntry?.[1]?.last_price;
+    const ltp = ltpData?.[key]?.last_price;
     if (!ltp) continue;
 
     // log(`🔍 ${trade.name} ltp=${ltp} target=${trade.target} sl=${trade.sl} dir=${trade.direction}`, "INFO");
@@ -1131,6 +1134,24 @@ function watchCMD() {
           saveTrades();
           try { fs.writeFileSync(SIG_FILE, "[]"); } catch { /* ignore */ }
           log("🗑 Trades cleared via UI command", "INFO");
+          break;
+
+        case "delete_trades":
+          if (Array.isArray(cmd.trades)) {
+            trades = cmd.trades;
+            saveTrades();
+            log(`🗑 Synced selected-delete state from bridge (${trades.length} trade(s) remain)`, "INFO");
+          } else if (Array.isArray(cmd.indexes) && cmd.indexes.length > 0) {
+            const toDelete = new Set(
+              cmd.indexes.filter(n => Number.isInteger(n) && n >= 0 && n < trades.length)
+            );
+            if (toDelete.size > 0) {
+              const beforeDelete = trades.length;
+              trades = trades.filter((_, i) => !toDelete.has(i));
+              saveTrades();
+              log(`🗑 Deleted ${beforeDelete - trades.length} selected trade(s) via UI command`, "INFO");
+            }
+          }
           break;
 
         default:

@@ -64,9 +64,9 @@ const STRAT_CFG={
 const SCHEDULE=[
   {from:555,to:560, label:"WAIT",           strategies:[],                    blocked:true, color:"#ffc107",emoji:"⏳"},
   {from:560,to:575, label:"FCB + GAP",      strategies:["FCB","GAP"],         blocked:false,color:"#00b4ff",emoji:"🔷"},
-  {from:575,to:690, label:"ORB + BB_SQZ",   strategies:["ORB","BB_SQZ"],      blocked:false,color:"#ffd54f",emoji:"📊"},
-  {from:690,to:810, label:"VWAP + ST_MACD", strategies:["VWAP","ST_MACD"],    blocked:false,color:"#00e5ff",emoji:"💧"},
-  {from:810,to:870, label:"EMA + ADX + VWAP", strategies:["EMA","ADX_EMA","VWAP"], blocked:false,color:"#69f0ae",emoji:"📈"},
+  {from:575,to:690, label:"ORB + BB + ADX", strategies:["ORB","BB_SQZ","ADX_EMA"], blocked:false,color:"#ffd54f",emoji:"📊"},
+  {from:690,to:800, label:"VWAP + ST + RSI + ADX", strategies:["VWAP","ST_MACD","RSI_DIV","ADX_EMA"], blocked:false,color:"#00e5ff",emoji:"💧"},
+  {from:800,to:870, label:"BB_SQZ ONLY", strategies:["BB_SQZ"], blocked:false,color:"#69f0ae",emoji:"🎯"},
   {from:870,to:920, label:"VWAP + RSI + ST_MACD", strategies:["VWAP","RSI_DIV","ST_MACD"], blocked:false,color:"#b388ff",emoji:"📉"},
   {from:920,to:930, label:"CLOSED",         strategies:[],                    blocked:true, color:"#ff5252",emoji:"🛑"},
 ];
@@ -92,7 +92,13 @@ const adminHeaders=()=>{
 const api={
   get: url=>fetchWithRetry(url,{headers:{...adminHeaders()}}).then(r=>r.json()),
   post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json",...adminHeaders()},body:JSON.stringify(body)}).then(r=>r.json()),
-  del: url=>fetchWithRetry(url,{method:"DELETE",headers:{...adminHeaders()}}).then(r=>r.json()),
+  del: async(url,body)=>{
+    const r=await fetchWithRetry(url,{method:"DELETE",headers:{"Content-Type":"application/json",...adminHeaders()},body:body?JSON.stringify(body):undefined});
+    const ct=(r.headers.get("content-type")||"").toLowerCase();
+    if(ct.includes("application/json"))return r.json();
+    const text=await r.text();
+    return text?{ok:r.ok,raw:text}:{ok:r.ok};
+  },
   cmd:(cmd,extra={})=>api.post("/api/cmd",{cmd,...extra}),
 };
 
@@ -116,6 +122,22 @@ const getProfile=async t=>{const r=await fetchWithRetry(`${UPSTOX_BASE}/user/pro
 const LS={TOKEN:"fcb_v6_token",PROFILE:"fcb_v6_profile",SETTINGS:"fcb_v6_settings",WALLET:"fcb_v6_wallet",ADMIN_KEY:"fcb_v6_admin_key"};
 const lsGet=(k,fb)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}};
 const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+const normalizeWalletStore=(raw)=>{
+  const empty={amount:"",set:false};
+  if(!raw||typeof raw!=="object")return{paper:{...empty},live:{...empty}};
+  // Migration: old format {amount,set} -> new mode-aware format
+  if("amount" in raw||"set" in raw){
+    const amt=raw.amount!=null?String(raw.amount):"";
+    const isSet=!!raw.set&&parseFloat(amt)>0;
+    return{paper:{amount:amt,set:isSet},live:{...empty}};
+  }
+  const p=raw.paper&&typeof raw.paper==="object"?raw.paper:empty;
+  const l=raw.live&&typeof raw.live==="object"?raw.live:empty;
+  return{
+    paper:{amount:p.amount!=null?String(p.amount):"",set:!!p.set&&parseFloat(p.amount)>0},
+    live:{amount:l.amount!=null?String(l.amount):"",set:!!l.set&&parseFloat(l.amount)>0},
+  };
+};
 
 // ── CANDLE CHART ──────────────────────────────────────────────────────────
 function CandleChart({candles,signal}){
@@ -211,6 +233,16 @@ function SBadge({strat,compact=false}){
 // ── TIMELINE BAR ──────────────────────────────────────────────────────────
 function TimelineBar({currentMin}){
   const total=930-555;
+  const ticks=[
+    {m:555,l:"9:15"},
+    {m:560,l:"9:20"},
+    {m:575,l:"9:35"},
+    {m:690,l:"11:30"},
+    {m:800,l:"1:20"},
+    {m:810,l:"1:30"},
+    {m:870,l:"2:30"},
+    {m:920,l:"3:20"},
+  ];
   return(
     <div style={{marginBottom:12}}>
       <div style={{fontSize:8,color:"#6f95b8",letterSpacing:1,marginBottom:4,textAlign:"center"}}>— TODAY'S STRATEGY TIMELINE —</div>
@@ -225,8 +257,12 @@ function TimelineBar({currentMin}){
         })}
         {currentMin>=555&&currentMin<=930&&<div style={{position:"absolute",left:`${((currentMin-555)/total)*100}%`,top:0,bottom:0,width:2,background:"#ffffff",opacity:0.5,borderRadius:1}}/>}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:2,fontSize:7,color:"#5f86a8",padding:"0 2px"}}>
-        <span>9:15</span><span>9:20</span><span>9:35</span><span>11:30</span><span>1:30</span><span>2:30</span><span>3:20</span>
+      <div style={{position:"relative",height:12,marginTop:2,fontSize:7,color:"#5f86a8"}}>
+        {ticks.map(t=>(
+          <span key={t.m} style={{position:"absolute",left:`${((t.m-555)/total)*100}%`,transform:"translateX(-50%)",whiteSpace:"nowrap"}}>
+            {t.l}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -321,12 +357,18 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
 }
 
 // ── TRADE CARD ────────────────────────────────────────────────────────────
-function TradeCard({trade}){
+function TradeCard({trade,index,selected,onToggleSelect}){
   const buy=trade.direction==="BUY";
   const statusColor={OPEN:"#ffd54f",TARGET_HIT:"#00e676",STOPPED_OUT:"#ff5252",PAPER:"#00b4ff",PLACED:"#80d8ff"}[trade.status]||"#888";
   const pnlColor=trade.pnl>0?"#00e676":trade.pnl<0?"#ff5252":"#888";
   return(
-    <div style={{background:"rgba(255,255,255,0.02)",border:`1px solid ${trade.status==="TARGET_HIT"?"rgba(0,230,118,0.2)":trade.status==="STOPPED_OUT"?"rgba(255,82,82,0.2)":"rgba(255,255,255,0.06)"}`,borderRadius:14,padding:14,marginBottom:10}}>
+    <div style={{background:"rgba(255,255,255,0.02)",border:`1px solid ${trade.status==="TARGET_HIT"?"rgba(0,230,118,0.2)":trade.status==="STOPPED_OUT"?"rgba(255,82,82,0.2)":"rgba(255,255,255,0.06)"}`,borderRadius:14,padding:14,marginBottom:10,position:"relative"}}>
+      <button
+        onClick={()=>onToggleSelect(index)}
+        style={{position:"absolute",top:8,right:8,padding:"2px 6px",borderRadius:5,border:`1px solid ${selected?"rgba(0,180,255,0.5)":"rgba(255,255,255,0.15)"}`,background:selected?"rgba(0,180,255,0.18)":"rgba(0,0,0,0.25)",color:selected?"#80d8ff":"#7ea3c0",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}
+      >
+        {selected?"☑ SEL":"☐ SEL"}
+      </button>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
         <div>
           <span style={{fontFamily:"'Orbitron',sans-serif",color:"#c8ddf0",fontSize:13,fontWeight:700}}>{trade.name}</span>
@@ -399,6 +441,7 @@ function FCBBotV6(){
   const[profile,setProfile]      =useState(savedProfile||null);
   const[signals,setSignals]      =useState([]);
   const[trades,setTrades]        =useState([]);
+  const[selectedTradeIndexes,setSelectedTradeIndexes]=useState([]);
   const[logs,setLogs]            =useState([]);     // [{ts,type,msg}] — from server SSE
   const[tab,setTab]              =useState("scanner");
   const[scanning,setScanning]    =useState(false);
@@ -418,8 +461,8 @@ function FCBBotV6(){
   const[logFilter,setLogFilter]  =useState("all");
   const[lastLogTs,setLastLogTs]  =useState("");
   const[settings,setSettings]    =useState(()=>lsGet(LS.SETTINGS,{riskPct:2,dailyLossLimit:500,maxTrades:5,scoreThreshold:6,stockTier:"tier1+2",niftyFilter:true}));
-  const[walletData,setWalletData]=useState(()=>lsGet(LS.WALLET,{amount:"",set:false}));
-  const[walletInput,setWalletInput]=useState(()=>lsGet(LS.WALLET,{amount:""}).amount||"");
+  const[walletData,setWalletData]=useState(()=>normalizeWalletStore(lsGet(LS.WALLET,null)));
+  const[walletInput,setWalletInput]=useState("");
   const[showTokenEdit,setShowTokenEdit]=useState(false);
   const[newToken,setNewToken]    =useState("");
   const[notifPerm,setNotifPerm]  =useState(typeof Notification!=="undefined"?Notification.permission:"unsupported");
@@ -502,7 +545,9 @@ function FCBBotV6(){
   // ── FETCH INITIAL LOGS FROM SERVER ───────────────────────────────────
   const fetchLogsFromServer=useCallback(async(date="today",sinceTs="")=>{
     try{
-      const url=sinceTs?`/api/logs?date=${date}&since=${encodeURIComponent(sinceTs)}`:`/api/logs?date=${date}`;
+      const url=sinceTs
+        ? `/api/logs?date=${date}&since=${encodeURIComponent(sinceTs)}`
+        : `/api/logs?date=${date}&all=1`;
       const data=await api.get(url);
       if(data.lines&&data.lines.length>0){
         appendLines(data.lines);
@@ -610,7 +655,16 @@ function FCBBotV6(){
               setNiftyLtp(+ltp.toFixed(2));
               if(cp)setNiftyChg(+(((ltp-cp)/cp)*100).toFixed(2));
             }
-            // Trade LTP / Live P&L comes from bot.js via /events trades stream.
+            // Update open trade LTP / MTM from live feed using instrumentKey mapping.
+            setTrades(prev=>prev.map(t=>{
+              if(!(t.status==="OPEN"||t.status==="PAPER"))return t;
+              if(!t.instrumentKey)return t;
+              const feed=msg.feeds[t.instrumentKey];
+              const tradeLtp=extractFeedLtp(feed);
+              if(!Number.isFinite(tradeLtp))return t;
+              const livePnl=((t.direction==="BUY"?tradeLtp-t.entry:t.entry-tradeLtp)*(t.qty||0));
+              return {...t,ltp:+tradeLtp.toFixed(2),livePnl:+livePnl.toFixed(0)};
+            }));
           }
         }catch{}
       };
@@ -657,18 +711,30 @@ function FCBBotV6(){
 
   // ── COMPUTED VALUES ───────────────────────────────────────────────────
   const schedule=getSchedule(minuteOfDay);
-  const wallet=parseFloat(walletData.amount)||0;
+  const activeModeKey=paperMode?"paper":"live";
+  const modeLabel=paperMode?"PAPER":"LIVE";
+  const modeWalletData=walletData[activeModeKey]||{amount:"",set:false};
+  const wallet=parseFloat(modeWalletData.amount)||0;
   const dailyPnL=useMemo(()=>trades.reduce((s,t)=>s+(t.pnl||0),0),[trades]);
-  // FIX 1: mirrors bot.js dailyLivePnL() — paper P&L must not inflate real wallet
-  const dailyLivePnL=useMemo(()=>trades.filter(t=>!t.paper).reduce((s,t)=>s+(t.pnl||0),0),[trades]);
-  // FIX 2: include unrealized P&L for open live trades (mark-to-market, capital already locked)
-  const openLivePnL=useMemo(()=>trades.filter(t=>t.status==="OPEN"&&!t.paper).reduce((s,t)=>s+(t.livePnl||0),0),[trades]);
+  useEffect(()=>{
+    setSelectedTradeIndexes(prev=>prev.filter(i=>i>=0&&i<trades.length));
+  },[trades.length]);
+  const modeTrades=useMemo(()=>trades.filter(t=>activeModeKey==="paper"?!!t.paper:!t.paper),[trades,activeModeKey]);
+  const closedModePnL=useMemo(()=>modeTrades.reduce((s,t)=>s+(t.pnl||0),0),[modeTrades]);
+  const openModePnL=useMemo(()=>modeTrades.filter(t=>t.status==="OPEN"||t.status==="PAPER").reduce((s,t)=>s+(t.livePnl||0),0),[modeTrades]);
   // BUG #5: only BUY direction open trades lock capital
-  const lockedCapital=useMemo(()=>trades.filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.direction==="BUY").reduce((s,t)=>s+(t.entry*t.qty),0),[trades]);
-  const availBal=walletData.set&&wallet>0?wallet+dailyLivePnL+openLivePnL-lockedCapital:null;
-  const walletPct=walletData.set&&wallet>0?Math.max(0,(availBal/wallet)*100):100;
+  const lockedCapital=useMemo(()=>modeTrades.filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.direction==="BUY").reduce((s,t)=>s+(t.entry*t.qty),0),[modeTrades]);
+  const availBal=modeWalletData.set&&wallet>0?wallet+closedModePnL+openModePnL-lockedCapital:null;
+  const walletPct=modeWalletData.set&&wallet>0?Math.max(0,(availBal/wallet)*100):100;
+  const modeTradeCount=modeTrades.length;
+  const modeWins=modeTrades.filter(t=>t.pnl!=null&&t.pnl>0).length;
+  const modeLosses=modeTrades.filter(t=>t.pnl!=null&&t.pnl<0).length;
+  const modeOpenCount=modeTrades.filter(t=>t.status==="OPEN"||t.status==="PAPER").length;
   const liveLossPnl=useMemo(()=>trades.filter(t=>!t.paper).reduce((s,t)=>s+(t.pnl!==null?t.pnl:(t.livePnl||0)),0),[trades]);
   const dailyLimitHit=!paperMode&&(liveLossPnl<=-settings.dailyLossLimit||trades.filter(t=>!t.paper).length>=settings.maxTrades);
+  const visibleSignals=useMemo(()=>{
+    return signals.filter(s=>!trades.some(t=>t.name===s.name&&(t.status==="OPEN"||t.status==="PAPER")));
+  },[signals,trades]);
 
   // Filtered logs
   const filteredLogs=useMemo(()=>{
@@ -684,6 +750,10 @@ function FCBBotV6(){
   // ── SAVE SETTINGS ─────────────────────────────────────────────────────
   useEffect(()=>{lsSet(LS.SETTINGS,settings);},[settings]);
   useEffect(()=>{lsSet(LS.WALLET,walletData);},[walletData]);
+  useEffect(()=>{
+    const next=walletData[activeModeKey]?.amount||"";
+    setWalletInput(next);
+  },[walletData,activeModeKey]);
 
   // ── TOKEN REFRESH ─────────────────────────────────────────────────────
   useEffect(()=>{
@@ -736,10 +806,26 @@ function FCBBotV6(){
     if(!window.confirm("Clear ALL trades and signals?"))return;
     try{
       await api.del("/api/trades");// bridge sends clear_trades to bot + clears files
-      setTrades([]);setSignals([]);
+      setTrades([]);setSignals([]);setSelectedTradeIndexes([]);
       addAlert("🗑 Trades cleared","info");
     }catch(e){addAlert("❌ Clear failed","error");}
   },[addAlert]);
+
+  const clearSelectedTrades=useCallback(async()=>{
+    if(selectedTradeIndexes.length===0)return;
+    if(!window.confirm(`Delete ${selectedTradeIndexes.length} selected trade(s)?`))return;
+    try{
+      const sorted=[...selectedTradeIndexes].sort((a,b)=>a-b);
+      await api.del("/api/trades",{indexes:sorted});
+      setTrades(prev=>prev.filter((_,i)=>!new Set(sorted).has(i)));
+      setSelectedTradeIndexes([]);
+      addAlert(`🗑 Deleted ${sorted.length} selected trade(s)`,"info");
+    }catch(e){addAlert("❌ Selected delete failed","error");}
+  },[selectedTradeIndexes,addAlert]);
+
+  const toggleTradeSelection=useCallback((idx)=>{
+    setSelectedTradeIndexes(prev=>prev.includes(idx)?prev.filter(i=>i!==idx):[...prev,idx]);
+  },[]);
 
   // ── SAVE SETTINGS TO SERVER ───────────────────────────────────────────
   const saveSettings=useCallback(async(s)=>{
@@ -814,7 +900,6 @@ function FCBBotV6(){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3,gap:8,minWidth:0}}>
           <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"nowrap",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
             ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
-            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s}/>)}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
             {niftyLtp&&(
@@ -828,46 +913,36 @@ function FCBBotV6(){
           </div>
         </div>
 
-        {/* ── ROW 2: Status bar ── */}
-        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,fontSize:8,color:"#7da8c6",overflow:"hidden"}}>
-          <span style={{color:"#79a7c7",fontWeight:700}}>{profile.user_name?.toUpperCase()}</span>
-          <span style={{color:"#7f9bb2"}}>·</span>
-          <span style={{padding:"1px 5px",borderRadius:3,fontSize:7,background:"rgba(255,82,82,0.15)",color:"#ff5252",fontWeight:700}}>⚡ LIVE</span>
-          <span style={{color:"#7f9bb2"}}>·</span>
-          <span style={{color:wsStatus==="connected"?"#00e676":wsStatus==="reconnecting"?"#ffc107":"#ff5252"}}>
+        {/* ── ROW 2: Status chips ── */}
+        <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4,fontSize:7,overflowX:"auto"}}>
+          <span style={{padding:"2px 6px",borderRadius:5,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:wsStatus==="connected"?"#00e676":wsStatus==="reconnecting"?"#ffc107":"#ff5252",fontWeight:700}}>
             {wsStatus==="connected"?"📡 WS ✓":wsStatus==="reconnecting"?"🔄 WS...":"📡 WS ✗"}
           </span>
-          <span style={{color:"#7f9bb2"}}>·</span>
-          <span style={{display:"inline-flex",alignItems:"center",gap:3}}>
-            <span style={{position:"relative",display:"inline-flex",alignItems:"center"}}>
-              <span style={{position:"absolute",width:8,height:8,borderRadius:"50%",background:isMarket()?"#00e676":"#ff5252",opacity:0.3,animation:"ping 1.5s infinite"}}/>
-              <span style={{width:6,height:6,borderRadius:"50%",background:isMarket()?"#00e676":"#ff5252",display:"block",position:"relative"}}/>
-            </span>
-            <span style={{color:isMarket()?"#00e676":"#ff5252",fontSize:7}}>{isMarket()?"NSE OPEN":"NSE CLOSED"}</span>
+          <span style={{padding:"2px 6px",borderRadius:5,background:isMarket()?"rgba(0,230,118,0.08)":"rgba(255,82,82,0.08)",border:`1px solid ${isMarket()?"rgba(0,230,118,0.25)":"rgba(255,82,82,0.25)"}`,color:isMarket()?"#00e676":"#ff5252",fontWeight:700}}>
+            {isMarket()?"🟢 MARKET OPEN":"🔴 MARKET CLOSED"}
           </span>
-          <span style={{color:"#7f9bb2"}}>·</span>
-          <span style={{color:"#7da8c6"}}>{istTime} IST</span>
-          {autoMode&&<><span style={{color:"#7f9bb2"}}>·</span><span style={{color:schedule.color}}>⏰ {schedule.label}</span></>}
+          <span style={{padding:"2px 6px",borderRadius:5,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:"#7da8c6",fontWeight:700}}>
+            🇮🇳 NSE
+          </span>
+          {autoMode&&<span style={{padding:"2px 6px",borderRadius:5,background:`${schedule.color}20`,border:`1px solid ${schedule.color}55`,color:schedule.color,fontWeight:700}}>⏰ {schedule.label}</span>}
+          <span style={{marginLeft:"auto",padding:"2px 6px",borderRadius:5,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:"#7da8c6",fontWeight:700}}>
+            {istTime} IST
+          </span>
         </div>
 
         {/* ── ROW 3: Session stats ── */}
-        {walletData.set&&(()=>{
-          const openLive=trades.filter(t=>t.status==="OPEN"&&!t.paper).length;
-          const openPaper=trades.filter(t=>t.status==="PAPER").length;
-          const wins=trades.filter(t=>t.pnl!=null&&t.pnl>0).length;
-          const losses=trades.filter(t=>t.pnl!=null&&t.pnl<0).length;
-          // FIX 3: LOSS bar tracks live-only closed P&L + unrealized (matches bot.js limit check)
-          const lossUsed=Math.abs(Math.min(0,dailyLivePnL+openLivePnL));
+        {modeWalletData.set&&(()=>{
+          const lossUsed=Math.abs(Math.min(0,closedModePnL+openModePnL));
           const lossLimit=settings.dailyLossLimit||200;
           const lossColor=lossUsed>=lossLimit*0.8?"#ff5252":lossUsed>=lossLimit*0.5?"#ffc107":"#7da8c6";
           return(
             <div style={{display:"flex",gap:0,marginBottom:4,background:"rgba(255,255,255,0.02)",borderRadius:7,overflow:"hidden",border:"1px solid rgba(255,255,255,0.04)"}}>
               {[
-                {label:"LIVE",value:`${openLive}/${settings.maxTrades||3}`,color:openLive>0?"#00e676":"#7da8c6",icon:"📋"},
-                {label:"PAPER",value:`${openPaper}`,color:openPaper>0?"#00b4ff":"#7da8c6",icon:"📝"},
+                {label:`${modeLabel} OPEN`,value:`${modeOpenCount}${!paperMode?`/${settings.maxTrades||3}`:""}`,color:modeOpenCount>0?(paperMode?"#00b4ff":"#00e676"):"#7da8c6",icon:paperMode?"📝":"⚡"},
                 {label:"LOSS",value:`₹${lossUsed.toFixed(0)}/₹${lossLimit}`,color:lossColor,icon:"💸"},
-                {label:"W/L",value:`${wins}W ${losses}L`,color:wins>losses?"#00e676":losses>wins?"#ff5252":"#7da8c6",icon:"🏆"},
-                {label:"SIGNALS",value:`${signals.length}`,color:signals.length>0?"#ffd54f":"#7da8c6",icon:"⚡"},
+                {label:"W/L",value:`${modeWins}W ${modeLosses}L`,color:modeWins>modeLosses?"#00e676":modeLosses>modeWins?"#ff5252":"#7da8c6",icon:"🏆"},
+                {label:`${modeLabel} TRADES`,value:`${modeTradeCount}`,color:modeTradeCount>0?(paperMode?"#00b4ff":"#00e676"):"#7da8c6",icon:"📋"},
+                {label:"SIGNALS",value:`${visibleSignals.length}`,color:visibleSignals.length>0?"#ffd54f":"#7da8c6",icon:"⚡"},
               ].map(({label,value,color,icon})=>(
                 <div key={label} style={{flex:1,padding:"4px 2px",textAlign:"center",borderRight:"1px solid rgba(255,255,255,0.04)"}}>
                   <div style={{fontSize:6,color:"#5f86a8",letterSpacing:0.5}}>{icon} {label}</div>
@@ -888,27 +963,27 @@ function FCBBotV6(){
 
         {/* Wallet */}
         <div style={{marginBottom:6}}>
-          {!walletData.set?(
+          {!modeWalletData.set?(
             <div style={{background:"rgba(255,193,7,0.07)",border:"1px solid rgba(255,193,7,0.2)",borderRadius:9,padding:"7px 11px"}}>
-              <div style={{fontSize:8,color:"#cc9900",marginBottom:4}}>💰 SET TODAY'S WALLET</div>
+              <div style={{fontSize:8,color:"#cc9900",marginBottom:4}}>💰 SET {modeLabel} WALLET</div>
               <div style={{display:"flex",gap:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,flex:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:"4px 9px"}}>
                   <span style={{color:"#ffd54f",fontWeight:700}}>₹</span>
-                  <input type="number" value={walletInput} onChange={e=>setWalletInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parseFloat(walletInput)>0){const amt=walletInput;setWalletData({amount:amt,set:true});api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 Wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} placeholder="e.g. 5000" style={{flex:1,background:"none",border:"none",color:"#ddeeff",fontSize:13,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
+                  <input type="number" value={walletInput} onChange={e=>setWalletInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} placeholder="e.g. 5000" style={{flex:1,background:"none",border:"none",color:"#ddeeff",fontSize:13,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
                 </div>
-                <button onClick={()=>{if(parseFloat(walletInput)>0){const amt=walletInput;setWalletData({amount:amt,set:true});api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 Wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} style={{padding:"4px 13px",background:"rgba(255,193,7,0.15)",border:"1px solid rgba(255,193,7,0.4)",borderRadius:7,color:"#ffd54f",fontSize:9,fontWeight:700,cursor:"pointer"}}>SET</button>
+                <button onClick={()=>{if(parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} style={{padding:"4px 13px",background:"rgba(255,193,7,0.15)",border:"1px solid rgba(255,193,7,0.4)",borderRadius:7,color:"#ffd54f",fontSize:9,fontWeight:700,cursor:"pointer"}}>SET</button>
               </div>
             </div>
           ):(
             <div style={{background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.05)",borderRadius:9,padding:"7px 11px"}}>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                <span style={{fontSize:7,color:"#6f95b8"}}>💰 WALLET</span>
-                <button onClick={()=>setWalletData({amount:"",set:false})} style={{background:"none",border:"none",color:"#6f95b8",fontSize:8,cursor:"pointer"}}>✏️</button>
+                <span style={{fontSize:7,color:"#6f95b8"}}>💰 {modeLabel} WALLET</span>
+                <button onClick={()=>setWalletData(prev=>({...prev,[activeModeKey]:{amount:"",set:false}}))} style={{background:"none",border:"none",color:"#6f95b8",fontSize:8,cursor:"pointer"}}>✏️</button>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
                 <div><div style={{fontSize:7,color:"#5f86a8"}}>ALLOC</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#8bb7d3",fontWeight:700}}>₹{wallet.toFixed(0)}</div></div>
                 <div style={{textAlign:"center"}}><div style={{fontSize:7,color:"#5f86a8"}}>LOCKED</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:"#ffd54f",fontWeight:700}}>₹{lockedCapital.toFixed(0)}</div></div>
-                <div><div style={{fontSize:7,color:"#5f86a8"}}>P&amp;L</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:(dailyLivePnL+openLivePnL)>=0?"#00e676":"#ff5252",fontWeight:700}}>{(dailyLivePnL+openLivePnL)>=0?"+":""}₹{(dailyLivePnL+openLivePnL).toFixed(0)}</div></div>
+                <div><div style={{fontSize:7,color:"#5f86a8"}}>{modeLabel} P&amp;L</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:(closedModePnL+openModePnL)>=0?"#00e676":"#ff5252",fontWeight:700}}>{(closedModePnL+openModePnL)>=0?"+":""}₹{(closedModePnL+openModePnL).toFixed(0)}</div></div>
                 <div style={{textAlign:"right"}}><div style={{fontSize:7,color:"#5f86a8"}}>AVAIL</div><div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:700,color:availBal!=null&&availBal<=0?"#ff5252":availBal!=null&&availBal<wallet*0.2?"#ffc107":"#00e676"}}>₹{availBal!=null?Math.max(0,availBal).toFixed(0):"—"}</div></div>
               </div>
               <div style={{height:3,background:"rgba(255,255,255,0.04)",borderRadius:2,overflow:"hidden"}}>
@@ -997,7 +1072,7 @@ function FCBBotV6(){
               </button>
               {autoMode&&!schedule.blocked&&<button onClick={()=>runScan()} disabled={scanning} style={{padding:"14px 12px",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,background:"rgba(255,255,255,0.02)",color:"#3a5a7a",cursor:"pointer",fontSize:9,fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🔄</button>}
             </div>
-            {signals.length===0&&!scanning&&(
+            {visibleSignals.length===0&&!scanning&&(
               <div style={{textAlign:"center",padding:"36px 20px",color:"#5f86a8"}}>
                 <div style={{fontSize:42,marginBottom:10}}>{(autoMode?schedule.strategies:manualStrats).map(s=>STRAT_CFG[s]?.emoji||"").join("")||"📡"}</div>
                 <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:10,color:schedule.color,letterSpacing:2,marginBottom:6}}>{autoMode?`AUTO: ${schedule.label}`:`MANUAL: ${manualStrats.join(" + ")}`}</div>
@@ -1005,7 +1080,7 @@ function FCBBotV6(){
                 {settings.niftyFilter&&niftyDir!==0&&<div style={{fontSize:9,marginTop:6,color:niftyDir>0?"#00e676":"#ff5252"}}>{niftyDir>0?"🟢 Nifty +ve — BUYs favored":"🔴 Nifty -ve — SELLs favored"}</div>}
               </div>
             )}
-            {signals.map((s,i)=>(
+            {visibleSignals.map((s,i)=>(
               <div key={i} style={{animation:`fadeIn .4s ease ${i*.08}s both`}}>
                 <SignalCard signal={s} onTrade={executeTrade} trading={trading} paperMode={paperMode} wallet={wallet||5000} availBal={availBal||0} settings={settings}/>
               </div>
@@ -1018,15 +1093,18 @@ function FCBBotV6(){
           <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{fontSize:9,color:"#6f95b8",letterSpacing:1}}>TODAY'S TRADES ({trades.length})</div>
-              {trades.length>0&&<button onClick={clearTrades} style={{padding:"4px 10px",background:"rgba(255,82,82,0.08)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:7,color:"#ff5252",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 CLEAR</button>}
+              {trades.length>0&&<div style={{display:"flex",gap:6}}>
+                <button onClick={clearSelectedTrades} disabled={selectedTradeIndexes.length===0} style={{padding:"4px 10px",background:selectedTradeIndexes.length===0?"rgba(255,255,255,0.05)":"rgba(255,171,64,0.1)",border:`1px solid ${selectedTradeIndexes.length===0?"rgba(255,255,255,0.08)":"rgba(255,171,64,0.25)"}`,borderRadius:7,color:selectedTradeIndexes.length===0?"#5f86a8":"#ffab40",fontSize:8,cursor:selectedTradeIndexes.length===0?"not-allowed":"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 SELECTED ({selectedTradeIndexes.length})</button>
+                <button onClick={clearTrades} style={{padding:"4px 10px",background:"rgba(255,82,82,0.08)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:7,color:"#ff5252",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 CLEAR ALL</button>
+              </div>}
             </div>
-            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#5f86a8"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t}/>)}
+            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#5f86a8"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t} index={i} selected={selectedTradeIndexes.includes(i)} onToggleSelect={toggleTradeSelection}/>)}
           </>
         )}
 
         {/* ── LOG TAB ── */}
         {tab==="log"&&(
-          <div style={{paddingBottom:62}}>
+          <div>
             {/* Date + filter row — sticky so it stays visible while log scrolls */}
             <div style={{position:"sticky",top:0,zIndex:10,background:"#070d16",paddingBottom:6}}>
             <div style={{display:"flex",gap:6,marginBottom:8,alignItems:"center"}}>

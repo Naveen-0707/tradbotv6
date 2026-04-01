@@ -2,6 +2,8 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 const { spawn } = require("child_process");
 
 const ADMIN_KEY = "smoke-admin-key";
@@ -28,6 +30,14 @@ async function waitUntilUp(retries = 30) {
 }
 
 async function main() {
+  const TRD_FILE = path.join(process.cwd(), "fcb_trades.json");
+  const seedTrades = [
+    { name: "RELIANCE", status: "PAPER", qty: 1 },
+    { name: "INFY", status: "PAPER", qty: 1 },
+    { name: "TCS", status: "PAPER", qty: 1 },
+  ];
+  fs.writeFileSync(TRD_FILE, JSON.stringify(seedTrades, null, 2));
+
   const child = spawn("node", ["bridge.js"], {
     cwd: process.cwd(),
     stdio: "ignore",
@@ -76,6 +86,36 @@ async function main() {
         body: huge,
       });
       assert.strictEqual(r.status, 413, "Expected 413 for oversized body");
+    }
+
+    // 5) status exposes version
+    {
+      const r = await req("/api/status");
+      assert.strictEqual(r.status, 200, "Expected 200 from /api/status");
+      assert.strictEqual(typeof r.json?.version, "string", "Expected status.version to be a string");
+    }
+
+    // 6) health endpoint is operational
+    {
+      const r = await req("/api/health");
+      assert.strictEqual(r.status, 200, "Expected 200 from /api/health");
+      assert.strictEqual(r.json?.ok, true, "Expected health.ok=true");
+      assert.strictEqual(r.json?.status, "healthy", "Expected health.status=healthy");
+      assert.strictEqual(typeof r.json?.uptimeSec, "number", "Expected health.uptimeSec to be numeric");
+    }
+
+    // 7) selective trade deletion by indexes
+    {
+      const r = await req("/api/trades", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", "x-fcb-admin-key": ADMIN_KEY },
+        body: JSON.stringify({ indexes: [1] }),
+      });
+      assert.strictEqual(r.status, 200, "Expected 200 for selective delete");
+      assert.strictEqual(r.json?.ok, true, "Expected selective delete ok=true");
+      const tradesAfter = JSON.parse(fs.readFileSync(TRD_FILE, "utf8"));
+      assert.strictEqual(tradesAfter.length, 2, "Expected one trade to be deleted");
+      assert.deepStrictEqual(tradesAfter.map(t => t.name), ["RELIANCE", "TCS"], "Expected INFY (index 1) to be removed");
     }
 
     console.log("✅ bridge api smoke tests passed");

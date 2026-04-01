@@ -205,7 +205,8 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const risk = fcbEntry - fL;
     const riskPct = (risk / fcbEntry) * 100;
 
-    const atrPct = atrNormalizedRisk(tc); if (hasFVG && retrace && engulfing && riskPct >= 0.5 && atrPct < 2.8) {
+    const atrPct = atrNormalizedRisk(tc);
+    if (hasFVG && retrace && engulfing && riskPct >= 0.5 && atrPct < 2.8) {
       const rawScore = 3;
       const score = applyBonuses(rawScore, "BUY", vr, niftyDir);
       return buildSignal({
@@ -288,7 +289,8 @@ function orbAnalyze(candles, name, trades, niftyDir) {
   const bbBonus = squeeze ? 2 : 0;
 
   // ── BUY SETUP ──
-  const atrPct = atrNormalizedRisk(tc); if (la.c > oH && p1.c <= oH && atrPct < 3.0) {
+  const atrPct = atrNormalizedRisk(tc);
+  if (la.c > oH && p1.c <= oH && atrPct < 3.0) {
     const orbBuyEntry = r2(Math.max(la.h, oH) * 1.0015);
     const risk    = orbBuyEntry - oM;
     const riskPct = (risk / orbBuyEntry) * 100;
@@ -498,15 +500,16 @@ function gapAnalyze(candles, name, trades, niftyDir) {
   if (!Array.isArray(candles) || candles.length < 15) return null;
   if (hasOpenPosition(name, trades)) return null;
 
-  
+  const tc = todayCandles(candles);
+  if (tc.length < 5) return null;
+
   // Find unique dates (oldest to newest, candles are oldest-first)
   const dates = [...new Set(candles.map(c => istDate(c.ts)))];
   if (dates.length < 2) return null;
 
-  const todayStr     = dates[dates.length - 1];
-  const yesterdayStr = dates[dates.length - 2];
-
-  const tc = candles.filter(c => istDate(c.ts) === todayStr);
+  const todayStr     = istDate(tc[0].ts);
+  const yesterdayStr = [...dates].reverse().find(d => d !== todayStr);
+  if (!yesterdayStr) return null;
   const yc = candles.filter(c => istDate(c.ts) === yesterdayStr);
 
   if (tc.length < 5 || yc.length < 5) return null;
@@ -756,7 +759,8 @@ function bbSqueezeAnalyze(candles, name, trades, niftyDir) {
   const macdH = histogram.length > 0 ? histogram[histogram.length - 1] : 0;
 
   // ── BUY: price broke above upper band ──
-  const atrPct = atrNormalizedRisk(allC); if (la.c > bb.upper && p1.c < bb.upper && macdH > 0 && atrPct < 3.2) {
+  const atrPct = atrNormalizedRisk(allC);
+  if (la.c > bb.upper && p1.c < bb.upper && macdH > 0 && atrPct < 3.2) {
     const bbBuyEntry = r2(Math.max(la.h, bb.upper) * 1.0015);
     const risk = bbBuyEntry - bb.middle;
     if (risk <= 0) return null;
@@ -936,9 +940,9 @@ function scoreSignal(signals) {
 const SCHEDULE = [
   { from: 555, to: 560, label: "WAIT",          strategies: [],                             blocked: true,  scanInterval: 0 },
   { from: 560, to: 575, label: "FCB + GAP",      strategies: ["FCB", "GAP"],                blocked: false, scanInterval: 1 },
-  { from: 575, to: 690, label: "ORB + BB",        strategies: ["ORB", "BB_SQZ"],             blocked: false, scanInterval: 2 },
-  { from: 690, to: 810, label: "VWAP + ST_MACD",  strategies: ["VWAP", "ST_MACD"],           blocked: false, scanInterval: 3 },
-  { from: 810, to: 870, label: "EMA + ADX + VWAP", strategies: ["EMA", "ADX_EMA", "VWAP"],    blocked: false, scanInterval: 3 },
+  { from: 575, to: 690, label: "ORB + BB + ADX",  strategies: ["ORB", "BB_SQZ", "ADX_EMA"],  blocked: false, scanInterval: 2 },
+  { from: 690, to: 800, label: "VWAP + ST + RSI + ADX", strategies: ["VWAP", "ST_MACD", "RSI_DIV", "ADX_EMA"], blocked: false, scanInterval: 3 },
+  { from: 800, to: 870, label: "BB_SQZ ONLY",     strategies: ["BB_SQZ"],                    blocked: false, scanInterval: 2 },
   { from: 870, to: 920, label: "VWAP + RSI + ST_MACD", strategies: ["VWAP", "RSI_DIV", "ST_MACD"], blocked: false, scanInterval: 2 },
   { from: 920, to: 930, label: "CLOSED",           strategies: [],                             blocked: true,  scanInterval: 0 },
 ];
