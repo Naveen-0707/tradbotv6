@@ -187,9 +187,25 @@ function StratBreakdown({confirmedBy,scoreBreakdown}){
 }
 
 // ── STRATEGY BADGE ────────────────────────────────────────────────────────
-function SBadge({strat}){
+function SBadge({strat,compact=false}){
   const cfg=STRAT_CFG[strat]||{label:strat,color:"#888",emoji:"•"};
-  return(<span style={{fontSize:8,padding:"2px 6px",borderRadius:4,background:`${cfg.color}15`,border:`1px solid ${cfg.color}40`,color:cfg.color,fontFamily:"'Share Tech Mono',monospace",marginLeft:6}}>{cfg.emoji} {cfg.label}</span>);
+  return(
+    <span
+      style={{
+        fontSize:compact?7:8,
+        padding:compact?"1px 5px":"2px 6px",
+        borderRadius:4,
+        background:`${cfg.color}15`,
+        border:`1px solid ${cfg.color}40`,
+        color:cfg.color,
+        fontFamily:"'Share Tech Mono',monospace",
+        marginLeft:compact?4:6,
+        letterSpacing:compact?0.4:0
+      }}
+    >
+      {cfg.emoji} {cfg.label}
+    </span>
+  );
 }
 
 // ── TIMELINE BAR ──────────────────────────────────────────────────────────
@@ -412,9 +428,30 @@ function FCBBotV6(){
   const wsRef = useRef(null);
   const wsReconnRef = useRef(null);
   const wsReconnectDelayRef = useRef(5000);
+  const wsSubKeysRef = useRef([]);
   const ocoRef=useRef(null);
   const logEndRef=useRef(null);
   const autoScrollRef=useRef(true);
+
+  const extractFeedLtp=feed=>{
+    return feed?.fullFeed?.indexFF?.ltpc?.ltp
+      ?? feed?.fullFeed?.marketFF?.ltpc?.ltp
+      ?? feed?.ltpc?.ltp
+      ?? null;
+  };
+
+  const syncWSSubscriptions=useCallback((ws,tradeList=[])=>{
+    if(!ws||ws.readyState!==WebSocket.OPEN)return;
+    const tradeKeys=tradeList
+      .filter(t=>(t.status==="OPEN"||t.status==="PAPER")&&t.instrumentKey)
+      .map(t=>t.instrumentKey);
+    const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank",...tradeKeys];
+    const uniq=[...new Set(keys)];
+    if(JSON.stringify(uniq)===JSON.stringify(wsSubKeysRef.current))return;
+    wsSubKeysRef.current=uniq;
+    const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:uniq}});
+    ws.send(new TextEncoder().encode(sub));
+  },[]);
 
   // ── HELPERS ──────────────────────────────────────────────────────────────
   const addAlert=useCallback((msg,type="info")=>{
@@ -555,10 +592,8 @@ function FCBBotV6(){
         setWsStatus("connected");
         wsReconnectDelayRef.current = 5000;
         
-        // Subscribe to Nifty for direction display
-        const keys=["NSE_INDEX|Nifty 50","NSE_INDEX|Nifty Bank"];
-        const sub=JSON.stringify({guid:"fcb-v6",method:"sub",data:{mode:"full",instrumentKeys:keys}});
-        ws.send(new TextEncoder().encode(sub));
+        // Subscribe to Nifty + open trades (for live LTP/P&L updates at WS tick cadence)
+        syncWSSubscriptions(ws,trades);
         ws._lp=Date.now();
         hb=setInterval(()=>{if(Date.now()-ws._lp>90000){ws.close();}},5000);
       };
@@ -592,7 +627,12 @@ function FCBBotV6(){
       };
       wsRef.current=ws;
     }catch(e){setWsStatus("disconnected");wsReconnRef.current=setTimeout(()=>connectWS(tkn),30000);}
-  },[]);
+  },[syncWSSubscriptions]);
+
+  useEffect(()=>{
+    const ws=wsRef.current;
+    if(ws&&ws.readyState===WebSocket.OPEN)syncWSSubscriptions(ws,trades);
+  },[trades,syncWSSubscriptions]);
 
   useEffect(()=>{
     if(!token||!profile)return;

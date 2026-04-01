@@ -703,6 +703,7 @@ async function execTrade(signal) {
 
   const record = {
     ...signal,
+    instrumentKey: stock?.key || null,
     qty,
     date:    todayStr(),
     time:    istTime(),
@@ -1114,8 +1115,10 @@ function watchCMD() {
         case "manual_paper":
           if (cmd.trade) {
             const t = cmd.trade;
+            const allStockList = [...STOCKS.tier1, ...STOCKS.tier2, ...STOCKS.tier3];
+            const stock = allStockList.find(s => s.name === t.name);
             if (!hasOpenPosition(t.name, trades)) {
-              trades.push({ ...t, paper: true, status: "PAPER" });
+              trades.push({ ...t, instrumentKey: t.instrumentKey || stock?.key || null, paper: true, status: "PAPER" });
               saveTrades();
               log(`📝 UI Paper synced: ${t.direction} ${t.qty}× ${t.name}`, "TRADE");
             }
