@@ -610,19 +610,7 @@ function FCBBotV6(){
               setNiftyLtp(+ltp.toFixed(2));
               if(cp)setNiftyChg(+(((ltp-cp)/cp)*100).toFixed(2));
             }
-            setTrades(prev=>prev.map(t=>{
-              if(t.status!=="OPEN"&&t.status!=="PAPER")return t;
-              if(!t.instrumentKey)return t;
-              const feed=msg.feeds[t.instrumentKey];
-              if(!feed)return t;
-              const ltpVal=extractFeedLtp(feed);
-              if(!ltpVal)return t;
-              const ltp=+Number(ltpVal).toFixed(2);
-              const livePnl=+(
-                (t.direction==="BUY"?ltp-t.entry:t.entry-ltp)*(t.qty||0)
-              ).toFixed(0);
-              return {...t,ltp,livePnl};
-            }));
+            // Trade LTP / Live P&L comes from bot.js via /events trades stream.
           }
         }catch{}
       };
@@ -824,11 +812,9 @@ function FCBBotV6(){
 
         {/* ── ROW 1: Title + Nifty ── */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3,gap:8,minWidth:0}}>
-          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:4,flexWrap:"nowrap",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
-            <span style={{whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:4,flexShrink:0}}>
-              ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
-            </span>
-            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s} compact/>)}
+          <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:13,fontWeight:900,color:"#ddeeff",letterSpacing:2,display:"flex",alignItems:"center",gap:6,flexWrap:"nowrap",minWidth:0,overflowX:"auto",scrollbarWidth:"none"}}>
+            ⚡ FCB BOT <span style={{color:"#ffd54f",fontSize:9}}>V6</span>
+            {(autoMode?schedule.strategies:manualStrats).map(s=><SBadge key={s} strat={s}/>)}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
             {niftyLtp&&(
