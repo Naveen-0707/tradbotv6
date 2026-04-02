@@ -73,14 +73,22 @@ function loadCFG() {
 let CFG = loadCFG();
 
 const TOKEN        = () => CFG.token;
-const PAPER        = () => CFG.paperMode       !== false;
-const RPCT         = () => CFG.riskPct         || 2;
-const MLOSS        = () => CFG.dailyLossLimit   || 200;
-const MTRD         = () => CFG.maxTrades        || 3;
-const WAL          = () => CFG.wallet           || 5000;
-const SCORE_THRESH = () => CFG.scoreThreshold   || 6;
-const STOCK_TIER   = () => CFG.stockTier        || "tier1+2";
-const NIFTY_FILTER = () => CFG.niftyFilter      !== false;
+const PAPER        = () => CFG.paperMode !== false;
+const modeCfg      = () => CFG.modeSettings?.[PAPER() ? "paper" : "live"] || {};
+const getModeValue = (key, fallback, transform = v => v) => {
+  const modeVal = modeCfg()[key];
+  if (modeVal !== undefined && modeVal !== null) return transform(modeVal);
+  const rootVal = CFG[key];
+  if (rootVal !== undefined && rootVal !== null) return transform(rootVal);
+  return fallback;
+};
+const RPCT         = () => getModeValue("riskPct", 2, v => Number(v) || 2);
+const MLOSS        = () => getModeValue("dailyLossLimit", 200, v => Number(v) || 200);
+const MTRD         = () => getModeValue("maxTrades", 3, v => Number(v) || 3);
+const WAL          = () => getModeValue("wallet", 5000, v => Number(v) || 5000);
+const SCORE_THRESH = () => getModeValue("scoreThreshold", 6, v => Number(v) || 6);
+const STOCK_TIER   = () => getModeValue("stockTier", "tier1+2", v => String(v || "tier1+2"));
+const NIFTY_FILTER = () => getModeValue("niftyFilter", true, v => v !== false);
 const COSTS        = () => CFG.brokeragePerOrder || 20; // ₹ per order leg (entry + exit = 2 legs)
 
 // ─── API ENDPOINTS ────────────────────────────────────────────────────────────
@@ -439,6 +447,8 @@ async function refreshNiftyState() {
 
 // ─── PAPER OCO SIMULATION — BUG #12 FIX ──────────────────────────────────────
 // V5 never auto-closed paper trades. V6 checks LTP every 5s and simulates hits.
+// D4 FIX: combine LTP checks with latest candle high/low touch checks so fast
+// spikes don't get missed between REST polling intervals.
 
 async function simulatePaperOCO() {
   const open = trades.filter(t => t.status === "PAPER" && t.paper);
@@ -520,18 +530,30 @@ async function simulatePaperOCO() {
       }
     }
 
-    const targetHit = trade.direction === "BUY" ? ltp >= trade.target : ltp <= trade.target;
-    const slHit     = trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl;
+    // D4: backup touch check from latest candle range (catches intra-interval hits)
+    let candleTargetHit = false;
+    let candleSlHit = false;
+    try {
+      const recent = await fetchCandles(key, 2);
+      const lc = recent[recent.length - 1];
+      if (lc) {
+        if (trade.direction === "BUY") {
+          candleTargetHit = lc.h >= trade.target;
+          candleSlHit     = lc.l <= trade.sl;
+        } else {
+          candleTargetHit = lc.l <= trade.target;
+          candleSlHit     = lc.h >= trade.sl;
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    const targetHit = (trade.direction === "BUY" ? ltp >= trade.target : ltp <= trade.target) || candleTargetHit;
+    const slHit     = (trade.direction === "BUY" ? ltp <= trade.sl     : ltp >= trade.sl)     || candleSlHit;
     // log(`🔍 ${trade.name} targetHit=${targetHit} slHit=${slHit}`, "INFO");
 
-    if (targetHit) {
-      const charges = COSTS() * 2;
-      const pnl = +((trade.risk * trade.qty * (trade.rrMult || 2)) - charges);
-      trade.status = "TARGET_HIT";
-      trade.pnl    = pnl;
-      log(`🎯 PAPER TARGET: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)} (after ₹${charges} charges)`, "TRADE");
-      notify(`🎯 Paper Target — ${trade.name}`, `+₹${pnl.toFixed(0)} net`);
-    } else if (slHit) {
+    // Conservative fill policy for paper mode:
+    // if both touched in same check window, prefer SL.
+    if (slHit) {
       const charges = COSTS() * 2;
       const pnl = -((trade.risk * trade.qty) + charges);
       trade.status = "STOPPED_OUT";
@@ -539,6 +561,13 @@ async function simulatePaperOCO() {
       markLoss(trade.name);
       log(`🛑 PAPER SL: ${trade.name} [${trade.strategy}] -₹${Math.abs(pnl).toFixed(0)} (incl ₹${charges} charges)`, "WARN");
       notify(`🛑 Paper SL — ${trade.name}`, `-₹${Math.abs(pnl).toFixed(0)} net`);
+    } else if (targetHit) {
+      const charges = COSTS() * 2;
+      const pnl = +((trade.risk * trade.qty * (trade.rrMult || 2)) - charges);
+      trade.status = "TARGET_HIT";
+      trade.pnl    = pnl;
+      log(`🎯 PAPER TARGET: ${trade.name} [${trade.strategy}] +₹${pnl.toFixed(0)} (after ₹${charges} charges)`, "TRADE");
+      notify(`🎯 Paper Target — ${trade.name}`, `+₹${pnl.toFixed(0)} net`);
     }
   }
   if (changed) saveTrades();

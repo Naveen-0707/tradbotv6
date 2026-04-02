@@ -138,6 +138,19 @@ const normalizeWalletStore=(raw)=>{
     live:{amount:l.amount!=null?String(l.amount):"",set:!!l.set&&parseFloat(l.amount)>0},
   };
 };
+const DEFAULT_SETTINGS={riskPct:2,dailyLossLimit:500,maxTrades:5,scoreThreshold:6,stockTier:"tier1+2",niftyFilter:true};
+const normalizeModeSettings=(raw)=>{
+  const base={...DEFAULT_SETTINGS};
+  if(!raw||typeof raw!=="object")return{paper:{...base},live:{...base}};
+  // Migration: old flat settings → copy to paper/live
+  if("riskPct" in raw||"dailyLossLimit" in raw||"maxTrades" in raw||"scoreThreshold" in raw||"stockTier" in raw||"niftyFilter" in raw){
+    const merged={...base,...raw};
+    return{paper:{...merged},live:{...merged}};
+  }
+  const p=raw.paper&&typeof raw.paper==="object"?{...base,...raw.paper}:{...base};
+  const l=raw.live&&typeof raw.live==="object"?{...base,...raw.live}:{...base};
+  return{paper:p,live:l};
+};
 
 // ── CANDLE CHART ──────────────────────────────────────────────────────────
 function CandleChart({candles,signal}){
@@ -460,7 +473,7 @@ function FCBBotV6(){
   const[logDates,setLogDates]    =useState([]);
   const[logFilter,setLogFilter]  =useState("all");
   const[lastLogTs,setLastLogTs]  =useState("");
-  const[settings,setSettings]    =useState(()=>lsGet(LS.SETTINGS,{riskPct:2,dailyLossLimit:500,maxTrades:5,scoreThreshold:6,stockTier:"tier1+2",niftyFilter:true}));
+  const[modeSettings,setModeSettings]=useState(()=>normalizeModeSettings(lsGet(LS.SETTINGS,null)));
   const[walletData,setWalletData]=useState(()=>normalizeWalletStore(lsGet(LS.WALLET,null)));
   const[walletInput,setWalletInput]=useState("");
   const[showTokenEdit,setShowTokenEdit]=useState(false);
@@ -613,9 +626,23 @@ function FCBBotV6(){
   // We track Nifty from WS LTP map if available, else show from status
   useEffect(()=>{
     if(!profile)return;
-    const iv=setInterval(async()=>{
-      try{const d=await api.get("/api/status");if(d.niftyFilter!==undefined){};}catch{}
-    },60000);
+    const syncStatus=async()=>{
+      try{
+        const d=await api.get("/api/status");
+        if(typeof d.paperMode==="boolean")setPaperMode(d.paperMode);
+        if(d.modeSettings){
+          const normalized=normalizeModeSettings(d.modeSettings);
+          setModeSettings(normalized);
+          const ws={
+            paper:{amount:String(normalized.paper.wallet||""),set:true},
+            live:{amount:String(normalized.live.wallet||""),set:true},
+          };
+          setWalletData(ws);
+        }
+      }catch{}
+    };
+    syncStatus();
+    const iv=setInterval(syncStatus,60000);
     return()=>clearInterval(iv);
   },[profile]);
 
@@ -713,6 +740,7 @@ function FCBBotV6(){
   const schedule=getSchedule(minuteOfDay);
   const activeModeKey=paperMode?"paper":"live";
   const modeLabel=paperMode?"PAPER":"LIVE";
+  const settings=modeSettings[activeModeKey]||DEFAULT_SETTINGS;
   const modeWalletData=walletData[activeModeKey]||{amount:"",set:false};
   const wallet=parseFloat(modeWalletData.amount)||0;
   const dailyPnL=useMemo(()=>trades.reduce((s,t)=>s+(t.pnl||0),0),[trades]);
@@ -748,7 +776,7 @@ function FCBBotV6(){
   },[logs,logFilter]);
 
   // ── SAVE SETTINGS ─────────────────────────────────────────────────────
-  useEffect(()=>{lsSet(LS.SETTINGS,settings);},[settings]);
+  useEffect(()=>{lsSet(LS.SETTINGS,modeSettings);},[modeSettings]);
   useEffect(()=>{lsSet(LS.WALLET,walletData);},[walletData]);
   useEffect(()=>{
     const next=walletData[activeModeKey]?.amount||"";
@@ -827,12 +855,22 @@ function FCBBotV6(){
     setSelectedTradeIndexes(prev=>prev.includes(idx)?prev.filter(i=>i!==idx):[...prev,idx]);
   },[]);
 
+  const patchCurrentSettings=useCallback((patch)=>{
+    setModeSettings(prev=>({
+      ...prev,
+      [activeModeKey]:{
+        ...(prev[activeModeKey]||DEFAULT_SETTINGS),
+        ...patch,
+      },
+    }));
+  },[activeModeKey]);
+
   // ── SAVE SETTINGS TO SERVER ───────────────────────────────────────────
   const saveSettings=useCallback(async(s)=>{
-    setSettings(s);
-    try{await api.post("/api/settings",s);addAlert("⚙️ Settings saved","success");}
+    patchCurrentSettings(s);
+    try{await api.post("/api/settings",{...s,mode:activeModeKey});addAlert(`⚙️ ${modeLabel} settings saved`,"success");}
     catch{addAlert("❌ Save failed","error");}
-  },[addAlert]);
+  },[addAlert,activeModeKey,modeLabel,patchCurrentSettings]);
 
   // ── APPLY NEW TOKEN ───────────────────────────────────────────────────
   const applyNewToken=useCallback(async()=>{
@@ -969,9 +1007,9 @@ function FCBBotV6(){
               <div style={{display:"flex",gap:8}}>
                 <div style={{display:"flex",alignItems:"center",gap:5,flex:1,background:"rgba(255,255,255,0.04)",borderRadius:7,padding:"4px 9px"}}>
                   <span style={{color:"#ffd54f",fontWeight:700}}>₹</span>
-                  <input type="number" value={walletInput} onChange={e=>setWalletInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} placeholder="e.g. 5000" style={{flex:1,background:"none",border:"none",color:"#ddeeff",fontSize:13,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
+                  <input type="number" value={walletInput} onChange={e=>setWalletInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{mode:activeModeKey,wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} placeholder="e.g. 5000" style={{flex:1,background:"none",border:"none",color:"#ddeeff",fontSize:13,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
                 </div>
-                <button onClick={()=>{if(parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} style={{padding:"4px 13px",background:"rgba(255,193,7,0.15)",border:"1px solid rgba(255,193,7,0.4)",borderRadius:7,color:"#ffd54f",fontSize:9,fontWeight:700,cursor:"pointer"}}>SET</button>
+                <button onClick={()=>{if(parseFloat(walletInput)>0){const amt=walletInput;setWalletData(prev=>({...prev,[activeModeKey]:{amount:amt,set:true}}));api.post("/api/settings",{mode:activeModeKey,wallet:parseFloat(amt)});addAlert(`💰 ${modeLabel} wallet: ₹${parseFloat(amt).toFixed(0)}`,"success");}}} style={{padding:"4px 13px",background:"rgba(255,193,7,0.15)",border:"1px solid rgba(255,193,7,0.4)",borderRadius:7,color:"#ffd54f",fontSize:9,fontWeight:700,cursor:"pointer"}}>SET</button>
               </div>
             </div>
           ):(
@@ -1196,7 +1234,7 @@ function FCBBotV6(){
                   <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>{label}</div>
                   <div style={{display:"flex",alignItems:"center",gap:7}}>
                     {prefix&&<span style={{color:"#8bb7d3"}}>{prefix}</span>}
-                    <input type="number" value={settings[key]} onChange={e=>setSettings(s=>({...s,[key]:parseFloat(e.target.value)||min}))} min={min} max={max} step={step||1} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"8px 10px",color:"#ddeeff",fontSize:12,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
+                    <input type="number" value={settings[key]} onChange={e=>patchCurrentSettings({[key]:parseFloat(e.target.value)||min})} min={min} max={max} step={step||1} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"8px 10px",color:"#ddeeff",fontSize:12,fontFamily:"'Orbitron',sans-serif",outline:"none",fontWeight:700}}/>
                     {suffix&&<span style={{color:"#8bb7d3",fontSize:10}}>{suffix}</span>}
                   </div>
                 </div>
@@ -1207,7 +1245,7 @@ function FCBBotV6(){
                 <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>📊 Stock Universe</div>
                 <div style={{display:"flex",gap:4}}>
                   {[["tier1","T1 (~47)"],["tier1+2","T1+2 (~77)"],["all","All (~107)"]].map(([v,l])=>(
-                    <button key={v} onClick={()=>setSettings(s=>({...s,stockTier:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.stockTier===v?"rgba(0,180,255,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.stockTier===v?"rgba(0,180,255,0.12)":"transparent",color:settings.stockTier===v?"#00b4ff":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.stockTier===v?700:400}}>{l}</button>
+                    <button key={v} onClick={()=>patchCurrentSettings({stockTier:v})} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.stockTier===v?"rgba(0,180,255,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.stockTier===v?"rgba(0,180,255,0.12)":"transparent",color:settings.stockTier===v?"#00b4ff":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.stockTier===v?700:400}}>{l}</button>
                   ))}
                 </div>
               </div>
@@ -1217,7 +1255,7 @@ function FCBBotV6(){
                 <div style={{fontSize:9,color:"#80b0d0",marginBottom:4}}>🔍 Nifty Direction Filter</div>
                 <div style={{display:"flex",gap:4}}>
                   {[[true,"ON (Recommended)"],[false,"OFF"]].map(([v,l])=>(
-                    <button key={String(v)} onClick={()=>setSettings(s=>({...s,niftyFilter:v}))} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.niftyFilter===v?"rgba(0,230,118,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.niftyFilter===v?"rgba(0,230,118,0.1)":"transparent",color:settings.niftyFilter===v?"#00e676":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.niftyFilter===v?700:400}}>{l}</button>
+                    <button key={String(v)} onClick={()=>patchCurrentSettings({niftyFilter:v})} style={{flex:1,padding:"7px 4px",borderRadius:7,border:`1px solid ${settings.niftyFilter===v?"rgba(0,230,118,0.4)":"rgba(255,255,255,0.06)"}`,background:settings.niftyFilter===v?"rgba(0,230,118,0.1)":"transparent",color:settings.niftyFilter===v?"#00e676":"#6f95b8",fontSize:8,cursor:"pointer",fontFamily:"'Share Tech Mono',monospace",fontWeight:settings.niftyFilter===v?700:400}}>{l}</button>
                   ))}
                 </div>
               </div>
