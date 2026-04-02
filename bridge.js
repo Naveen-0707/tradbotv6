@@ -78,6 +78,41 @@ const writeJSONAsync = async (f, d) => {
   catch { return false; }
 };
 
+function ensureModeSettings(cfg = {}) {
+  const defaults = {
+    wallet: 5000,
+    riskPct: 2,
+    dailyLossLimit: 500,
+    maxTrades: 3,
+    scoreThreshold: 6,
+    stockTier: "tier1+2",
+    niftyFilter: true,
+  };
+  const paperBase = cfg.modeSettings?.paper || {};
+  const liveBase  = cfg.modeSettings?.live  || {};
+  cfg.modeSettings = {
+    paper: {
+      wallet:         Number.isFinite(Number(paperBase.wallet))         ? Number(paperBase.wallet)         : Number.isFinite(Number(cfg.wallet))         ? Number(cfg.wallet)         : defaults.wallet,
+      riskPct:        Number.isFinite(Number(paperBase.riskPct))        ? Number(paperBase.riskPct)        : Number.isFinite(Number(cfg.riskPct))        ? Number(cfg.riskPct)        : defaults.riskPct,
+      dailyLossLimit: Number.isFinite(Number(paperBase.dailyLossLimit)) ? Number(paperBase.dailyLossLimit) : Number.isFinite(Number(cfg.dailyLossLimit)) ? Number(cfg.dailyLossLimit) : defaults.dailyLossLimit,
+      maxTrades:      Number.isFinite(Number(paperBase.maxTrades))      ? Number(paperBase.maxTrades)      : Number.isFinite(Number(cfg.maxTrades))      ? Number(cfg.maxTrades)      : defaults.maxTrades,
+      scoreThreshold: Number.isFinite(Number(paperBase.scoreThreshold)) ? Number(paperBase.scoreThreshold) : Number.isFinite(Number(cfg.scoreThreshold)) ? Number(cfg.scoreThreshold) : defaults.scoreThreshold,
+      stockTier:      ["tier1", "tier1+2", "all"].includes(paperBase.stockTier) ? paperBase.stockTier : ["tier1", "tier1+2", "all"].includes(cfg.stockTier) ? cfg.stockTier : defaults.stockTier,
+      niftyFilter:    typeof paperBase.niftyFilter === "boolean" ? paperBase.niftyFilter : typeof cfg.niftyFilter === "boolean" ? cfg.niftyFilter : defaults.niftyFilter,
+    },
+    live: {
+      wallet:         Number.isFinite(Number(liveBase.wallet))         ? Number(liveBase.wallet)         : Number.isFinite(Number(cfg.wallet))         ? Number(cfg.wallet)         : defaults.wallet,
+      riskPct:        Number.isFinite(Number(liveBase.riskPct))        ? Number(liveBase.riskPct)        : Number.isFinite(Number(cfg.riskPct))        ? Number(cfg.riskPct)        : defaults.riskPct,
+      dailyLossLimit: Number.isFinite(Number(liveBase.dailyLossLimit)) ? Number(liveBase.dailyLossLimit) : Number.isFinite(Number(cfg.dailyLossLimit)) ? Number(cfg.dailyLossLimit) : defaults.dailyLossLimit,
+      maxTrades:      Number.isFinite(Number(liveBase.maxTrades))      ? Number(liveBase.maxTrades)      : Number.isFinite(Number(cfg.maxTrades))      ? Number(cfg.maxTrades)      : defaults.maxTrades,
+      scoreThreshold: Number.isFinite(Number(liveBase.scoreThreshold)) ? Number(liveBase.scoreThreshold) : Number.isFinite(Number(cfg.scoreThreshold)) ? Number(cfg.scoreThreshold) : defaults.scoreThreshold,
+      stockTier:      ["tier1", "tier1+2", "all"].includes(liveBase.stockTier) ? liveBase.stockTier : ["tier1", "tier1+2", "all"].includes(cfg.stockTier) ? cfg.stockTier : defaults.stockTier,
+      niftyFilter:    typeof liveBase.niftyFilter === "boolean" ? liveBase.niftyFilter : typeof cfg.niftyFilter === "boolean" ? cfg.niftyFilter : defaults.niftyFilter,
+    },
+  };
+  return cfg;
+}
+
 const cors = res => {
   const origin = res.req?.headers?.origin;
   const allow = !origin || ALLOWED_ORIGINS.includes(origin) ? (origin || ALLOWED_ORIGINS[0]) : "";
@@ -418,29 +453,34 @@ const server = http.createServer((req, res) => {
         // ── POST /api/settings ───────────────────────────────────────────
         if (req.method === "POST" && urlPath === "/api/settings") {
           if (!requireAdmin(req, res)) return;
-          const cfg = await readJSONAsync(CFG_FILE, {});
-          const { riskPct, dailyLossLimit, maxTrades, wallet, paperMode, confirmLive,
+          let cfg = await readJSONAsync(CFG_FILE, {});
+          cfg = ensureModeSettings(cfg);
+          const { mode, riskPct, dailyLossLimit, maxTrades, wallet, paperMode, confirmLive,
                   scoreThreshold, stockTier, niftyFilter } = parsed;
+          const modeKey = mode === "paper" || mode === "live"
+            ? mode
+            : (cfg.paperMode !== false ? "paper" : "live");
+          const modeCfg = cfg.modeSettings[modeKey];
 
           if (riskPct !== undefined) {
             const n = Number(riskPct);
             if (!Number.isFinite(n)) return json(res, { ok: false, error: "riskPct must be numeric" }, 400);
-            cfg.riskPct = Math.min(10, Math.max(0.1, n));
+            modeCfg.riskPct = Math.min(10, Math.max(0.1, n));
           }
           if (dailyLossLimit !== undefined) {
             const n = Number(dailyLossLimit);
             if (!Number.isFinite(n)) return json(res, { ok: false, error: "dailyLossLimit must be numeric" }, 400);
-            cfg.dailyLossLimit = Math.max(0, n);
+            modeCfg.dailyLossLimit = Math.max(0, n);
           }
           if (maxTrades !== undefined) {
             const n = Number(maxTrades);
             if (!Number.isFinite(n)) return json(res, { ok: false, error: "maxTrades must be numeric" }, 400);
-            cfg.maxTrades = Math.min(20, Math.max(1, Math.trunc(n)));
+            modeCfg.maxTrades = Math.min(20, Math.max(1, Math.trunc(n)));
           }
           if (wallet !== undefined) {
             const n = Number(wallet);
             if (!Number.isFinite(n)) return json(res, { ok: false, error: "wallet must be numeric" }, 400);
-            cfg.wallet = Math.max(100, n);
+            modeCfg.wallet = Math.max(100, n);
           }
           if (paperMode !== undefined) {
             if (typeof paperMode !== "boolean") return json(res, { ok: false, error: "paperMode must be boolean" }, 400);
@@ -456,18 +496,27 @@ const server = http.createServer((req, res) => {
           if (scoreThreshold !== undefined) {
             const n = Number(scoreThreshold);
             if (!Number.isFinite(n)) return json(res, { ok: false, error: "scoreThreshold must be numeric" }, 400);
-            cfg.scoreThreshold = Math.min(10, Math.max(1, Math.trunc(n)));
+            modeCfg.scoreThreshold = Math.min(10, Math.max(1, Math.trunc(n)));
           }
           if (stockTier !== undefined) {
             if (!["tier1", "tier1+2", "all"].includes(stockTier)) {
               return json(res, { ok: false, error: "stockTier must be tier1|tier1+2|all" }, 400);
             }
-            cfg.stockTier = stockTier;
+            modeCfg.stockTier = stockTier;
           }
           if (niftyFilter !== undefined) {
             if (typeof niftyFilter !== "boolean") return json(res, { ok: false, error: "niftyFilter must be boolean" }, 400);
-            cfg.niftyFilter = niftyFilter;
+            modeCfg.niftyFilter = niftyFilter;
           }
+
+          // Legacy compatibility (root mirrors active mode).
+          cfg.wallet         = modeCfg.wallet;
+          cfg.riskPct        = modeCfg.riskPct;
+          cfg.dailyLossLimit = modeCfg.dailyLossLimit;
+          cfg.maxTrades      = modeCfg.maxTrades;
+          cfg.scoreThreshold = modeCfg.scoreThreshold;
+          cfg.stockTier      = modeCfg.stockTier;
+          cfg.niftyFilter    = modeCfg.niftyFilter;
 
           await writeJSONAsync(CFG_FILE, cfg);
           await writeJSONAsync(CMD_FILE, { cmd: "reload_settings", ts: Date.now() });
@@ -579,18 +628,22 @@ const server = http.createServer((req, res) => {
 
         // ── GET /api/status ──────────────────────────────────────────────
         if (req.method === "GET" && urlPath === "/api/status") {
-          const cfg = await readJSONAsync(CFG_FILE, {});
+          let cfg = await readJSONAsync(CFG_FILE, {});
+          cfg = ensureModeSettings(cfg);
+          const activeMode = cfg.paperMode !== false ? "paper" : "live";
+          const active = cfg.modeSettings[activeMode];
           return json(res, {
             running:        true,
             version:        APP_VERSION,
             paperMode:      cfg.paperMode       !== false,
-            wallet:         cfg.wallet          || 5000,
-            riskPct:        cfg.riskPct         || 2,
-            maxTrades:      cfg.maxTrades       || 3,
-            dailyLossLimit: cfg.dailyLossLimit  || 500,
-            scoreThreshold: cfg.scoreThreshold  || 6,
-            stockTier:      cfg.stockTier       || "tier1+2",
-            niftyFilter:    cfg.niftyFilter     !== false,
+            wallet:         active.wallet,
+            riskPct:        active.riskPct,
+            maxTrades:      active.maxTrades,
+            dailyLossLimit: active.dailyLossLimit,
+            scoreThreshold: active.scoreThreshold,
+            stockTier:      active.stockTier,
+            niftyFilter:    active.niftyFilter,
+            modeSettings:   cfg.modeSettings,
             currentLogFile: path.basename(todayLogFile()),
           });
         }
