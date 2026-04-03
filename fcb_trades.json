@@ -1,0 +1,19 @@
+[
+  {
+    "name": "SBIN",
+    "status": "OPEN",
+    "qty": 1,
+    "paper": false
+  },
+  {
+    "name": "RELIANCE",
+    "status": "PAPER",
+    "qty": 1,
+    "paper": true
+  },
+  {
+    "name": "TCS",
+    "status": "PAPER",
+    "qty": 1
+  }
+]
