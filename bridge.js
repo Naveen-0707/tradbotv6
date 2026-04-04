@@ -284,7 +284,7 @@ function getOrCreateLogWatcher() {
   const today = todayStr();
   if (today !== currentLogDate) {
     console.log(Y(`🔄 Log date changed: ${currentLogDate} → ${today}. Switching watcher.`));
-    if (logFileWatcher) { try { logFileWatcher.stop(); } catch {} }
+    if (logFileWatcher) { try { fs.unwatchFile(watchedLogFile); } catch {} }
     currentLogDate  = today;
     watchedLogFile  = todayLogFile();
     watchedLogSize  = 0;
