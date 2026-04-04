@@ -10,7 +10,7 @@
 //    • GET /api/logs?since=<timestamp> — catch-up endpoint on UI reconnect
 //    • GET /api/logs/dates — list all available log dates for date picker
 //    • POST /api/cmd — "clear_trades" added to allowed list (BUG #8 fix)
-//    • SSE sends "reconnect" event with missed log count on new connection
+//    • SSE sends "connected" event on new connection; client catches up via GET /api/logs?since=
 //    • Bridge console output NEVER written to bot log files (logs stay clean)
 //
 //  UNCHANGED FROM V5 (working well):
