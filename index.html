@@ -879,7 +879,7 @@ function FCBBotV6(){
       setSelectedTradeKeys([]);
       addAlert(`🗑 Deleted ${sorted.length} selected trade(s)`,"info");
     }catch(e){addAlert("❌ "+(e.message||"Selected delete failed"),"error");}
-  },[selectedTradeIndexes,addAlert,trades]);
+  },[selectedTradeKeys,addAlert,trades]);
 
   const toggleTradeSelection=useCallback((trade)=>{
     const key=(trade.time||"")+trade.name;
