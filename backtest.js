@@ -321,7 +321,7 @@ async function replayDay(date, candleMap, niftyCandles) {
 
     if (m < 555 || m >= 920)                              continue;
     if (sched.blocked || !sched.strategies.length)         continue;
-    if (m - lastScanMin < (sched.scanInterval || 2))       continue;
+    if (m - lastScanMin < 5) continue;
     lastScanMin = m;
 
     const locked   = dayTrades
@@ -468,7 +468,7 @@ async function main() {
   console.log();
 
   const candleMap  = {};
-  const BATCH_SIZE = 8; // conservative — stays within Upstox rate limits
+  const BATCH_SIZE = 47; // conservative — stays within Upstox rate limits
 
   for (let i = 0; i < stocks.length; i += BATCH_SIZE) {
     const batch = stocks.slice(i, i + BATCH_SIZE);
@@ -479,7 +479,7 @@ async function main() {
       })
     );
     process.stdout.write(`\r   Fetched ${Math.min(i + BATCH_SIZE, stocks.length)}/${stocks.length} stocks...`);
-    await sleep(50);
+    await sleep(0);
   }
 
   const fetched = Object.values(candleMap).filter(c => c.length > 0).length;
