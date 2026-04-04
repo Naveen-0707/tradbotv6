@@ -433,8 +433,9 @@ function calcTradePnLAtExit(trade, exitPrice, charges = COSTS() * 2) {
 
 // BUG #5 FIX: SELL trades (shorts) don't require capital — exclude from locked
 function lockedCapital() {
+  const activeStatus = PAPER() ? "PAPER" : "OPEN";
   return trades
-    .filter(t => (t.status === "OPEN" || t.status === "PAPER") && t.direction === "BUY")
+    .filter(t => t.status === activeStatus && t.direction === "BUY")
     .reduce((s, t) => s + t.entry * t.qty, 0);
 }
 
