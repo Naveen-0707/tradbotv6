@@ -489,9 +489,10 @@ function FCBBotV6(){
   const[canInstall,setCanInstall]=useState(!!window.deferredInstallPrompt);
   const[appVersion,setAppVersion]=useState("6.x");
 
-  const wsRef = useRef(null);
+ const wsRef = useRef(null);
   const wsReconnRef = useRef(null);
   const wsReconnectDelayRef = useRef(5000);
+  const hbRef = useRef(null);
   const wsSubKeysRef = useRef([]);
   const ocoRef=useRef(null);
   const logEndRef=useRef(null);
@@ -665,6 +666,7 @@ function FCBBotV6(){
   // ── WS FOR LIVE LTP (paper OCO) ──────────────────────────────────────
   const connectWS=useCallback(async(tkn)=>{
     if(wsReconnRef.current){clearTimeout(wsReconnRef.current);wsReconnRef.current=null;}
+    if(hbRef.current){clearInterval(hbRef.current);hbRef.current=null;}
     if(wsRef.current){const old=wsRef.current;old.onopen=null;old.onmessage=null;old.onerror=null;old.onclose=null;old.close();wsRef.current=null;}
     try{
       await FCBProto.init();
@@ -675,7 +677,6 @@ function FCBBotV6(){
       const wsUrl=authJson?.data?.authorized_redirect_uri;
       if(!wsUrl)throw new Error("No WS URL");
       const ws=new WebSocket(wsUrl);
-      let hb=null;
       ws.onopen=()=>{
         setWsStatus("connected");
         wsReconnectDelayRef.current = 5000;
@@ -683,7 +684,7 @@ function FCBBotV6(){
         // Subscribe to Nifty + open trades (for live LTP/P&L updates at WS tick cadence)
         syncWSSubscriptions(ws,trades);
         ws._lp=Date.now();
-        hb=setInterval(()=>{if(Date.now()-ws._lp>90000){ws.close();}},5000);
+        hbRef.current=setInterval(()=>{if(Date.now()-ws._lp>90000){ws.close();}},5000);
       };
       ws.onmessage=async e=>{
         ws._lp=Date.now();
@@ -713,7 +714,8 @@ function FCBBotV6(){
       };
       ws.onerror=()=>setWsStatus("disconnected");
       ws.onclose = () => {
-        clearInterval(hb);
+        clearInterval(hbRef.current);
+        hbRef.current=null;
         setWsStatus("disconnected");
         const delay = Math.min(wsReconnectDelayRef.current, 120000);
         console.log(`🔄 WS closed — reconnecting in ${delay/1000}s`);
