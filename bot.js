@@ -440,7 +440,7 @@ function lockedCapital() {
 
 // BUG #11 FIX: available balance shrinks as trades lock capital
 function availableBalance() {
-  return WAL() + dailyLivePnL() - lockedCapital();
+  return WAL() + dailyModePnL() - lockedCapital();
 }
 
 // BUG-2 + BUG-4 + #11 FIX: qty capped by risk%, available capital, AND 30% wallet-per-trade
