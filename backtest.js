@@ -479,7 +479,7 @@ async function main() {
       })
     );
     process.stdout.write(`\r   Fetched ${Math.min(i + BATCH_SIZE, stocks.length)}/${stocks.length} stocks...`);
-    await sleep(400);
+    await sleep(50);
   }
 
   const fetched = Object.values(candleMap).filter(c => c.length > 0).length;
