@@ -1211,7 +1211,7 @@ function scoreSignal(signals) {
   // This prevents trading when the system is genuinely split on direction.
   const CONFLICT_THRESHOLD = 3;
   if (buyScore >= CONFLICT_THRESHOLD && sellScore >= CONFLICT_THRESHOLD && Math.abs(buyScore - sellScore) <= 1) {
-    const stockName = signals[0]?.name || "UNKNOWN";
+    const stockName = signals.find(s => s?.name)?.name || "UNKNOWN";
     console.warn(`[strategies] Conflict skip ${stockName}: BUY=${buyScore} SELL=${sellScore}`);
     return null;
   }
