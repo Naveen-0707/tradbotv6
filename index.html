@@ -39,6 +39,12 @@ window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();window.defe
 </script>
 </head>
 <body>
+<script>
+window.onerror=function(msg,src,line,col){
+  document.body.innerHTML='<pre style="color:red;padding:20px;font-size:14px;background:#000">ERROR:\n'+msg+'\nLine:'+line+' Col:'+col+'</pre>';
+  return true;
+};
+</script>
 <div id="root"></div>
 <script type="text/babel">
 const{useState,useEffect,useRef,useCallback,useMemo}=React;
