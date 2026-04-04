@@ -300,7 +300,7 @@ function SignalCard({signal,onTrade,trading,paperMode,wallet,availBal,settings})
   });
   const cost=signal.entry*qty;
   // BUG #5 fix: SELL trades don't need balance check
-  const balOk=signal.direction==="SELL"||availBal<=0||availBal>=cost;
+  const balOk=signal.direction==="SELL"||availBal===null||availBal>=cost;
 
   const extras=[];
   if(signal.vwap)extras.push(`VWAP ₹${signal.vwap}`);
@@ -383,7 +383,7 @@ function TradeCard({trade,index,selected,onToggleSelect}){
   return(
     <div style={{background:"rgba(255,255,255,0.02)",border:`1px solid ${trade.status==="TARGET_HIT"?"rgba(0,230,118,0.2)":trade.status==="STOPPED_OUT"?"rgba(255,82,82,0.2)":"rgba(255,255,255,0.06)"}`,borderRadius:14,padding:14,marginBottom:10,position:"relative"}}>
       <button
-        onClick={()=>onToggleSelect(index)}
+        onClick={()=>onToggleSelect(trade)}
         style={{position:"absolute",top:8,right:8,padding:"2px 6px",borderRadius:5,border:`1px solid ${selected?"rgba(0,180,255,0.5)":"rgba(255,255,255,0.15)"}`,background:selected?"rgba(0,180,255,0.18)":"rgba(0,0,0,0.25)",color:selected?"#80d8ff":"#7ea3c0",fontSize:8,fontFamily:"'Orbitron',sans-serif",fontWeight:700,cursor:"pointer"}}
       >
         {selected?"☑ SEL":"☐ SEL"}
@@ -460,7 +460,7 @@ function FCBBotV6(){
   const[profile,setProfile]      =useState(savedProfile||null);
   const[signals,setSignals]      =useState([]);
   const[trades,setTrades]        =useState([]);
-  const[selectedTradeIndexes,setSelectedTradeIndexes]=useState([]);
+  const[selectedTradeKeys,setSelectedTradeKeys]=useState([]);
   const[logs,setLogs]            =useState([]);     // [{ts,type,msg}] — from server SSE
   const[tab,setTab]              =useState("scanner");
   const[scanning,setScanning]    =useState(false);
@@ -761,9 +761,7 @@ function FCBBotV6(){
   const modeWalletData=walletData[activeModeKey]||{amount:"",set:false};
   const wallet=parseFloat(modeWalletData.amount)||0;
   const dailyPnL=useMemo(()=>trades.reduce((s,t)=>s+(t.pnl||0),0),[trades]);
-  useEffect(()=>{
-    setSelectedTradeIndexes(prev=>prev.filter(i=>i>=0&&i<trades.length));
-  },[trades.length]);
+  useEffect(()=>{},[trades.length]);
   const modeTrades=useMemo(()=>trades.filter(t=>activeModeKey==="paper"?!!t.paper:!t.paper),[trades,activeModeKey]);
   const closedModePnL=useMemo(()=>modeTrades.reduce((s,t)=>s+(t.pnl||0),0),[modeTrades]);
   const openModePnL=useMemo(()=>modeTrades.filter(t=>t.status==="OPEN"||t.status==="PAPER").reduce((s,t)=>s+(t.livePnl||0),0),[modeTrades]);
@@ -840,6 +838,7 @@ function FCBBotV6(){
         // Live safety: manual one-tap live execution from signal card is disabled.
         // Use SCAN/AUTO so bot.js executes live entries with its full guards.
         addAlert("⚠️ Live manual trade disabled. Use SCAN/AUTO (bot executes).","warn");
+        setTrading(false);
         return;
       }
     }catch(e){addAlert("❌ Trade error: "+e.message,"error");}
@@ -859,21 +858,24 @@ function FCBBotV6(){
   },[addAlert,trades]);
 
   const clearSelectedTrades=useCallback(async()=>{
-    if(selectedTradeIndexes.length===0)return;
-    if(selectedTradeIndexes.some(i=>trades[i]&&trades[i].status==="OPEN"&&!trades[i].paper)){addAlert("🛑 Open live trades cannot be deleted from history","error");return;}
-    if(!window.confirm(`Delete ${selectedTradeIndexes.length} selected trade(s)?`))return;
+    if(selectedTradeKeys.length===0)return;
+    const keySet=new Set(selectedTradeKeys);
+    const selectedIdxs=trades.map((t,i)=>keySet.has((t.time||"")+t.name)?i:-1).filter(i=>i>=0);
+    if(selectedIdxs.some(i=>trades[i]&&trades[i].status==="OPEN"&&!trades[i].paper)){addAlert("🛑 Open live trades cannot be deleted from history","error");return;}
+    if(!window.confirm(`Delete ${selectedIdxs.length} selected trade(s)?`))return;
     try{
-      const sorted=[...selectedTradeIndexes].sort((a,b)=>a-b);
+      const sorted=[...selectedIdxs].sort((a,b)=>a-b);
       const r=await api.del("/api/trades",{indexes:sorted});
       if(r?.ok===false)throw new Error(r.error||"Delete blocked");
       setTrades(prev=>prev.filter((_,i)=>!new Set(sorted).has(i)));
-      setSelectedTradeIndexes([]);
+      setSelectedTradeKeys([]);
       addAlert(`🗑 Deleted ${sorted.length} selected trade(s)`,"info");
     }catch(e){addAlert("❌ "+(e.message||"Selected delete failed"),"error");}
   },[selectedTradeIndexes,addAlert,trades]);
 
-  const toggleTradeSelection=useCallback((idx)=>{
-    setSelectedTradeIndexes(prev=>prev.includes(idx)?prev.filter(i=>i!==idx):[...prev,idx]);
+  const toggleTradeSelection=useCallback((trade)=>{
+    const key=(trade.time||"")+trade.name;
+    setSelectedTradeKeys(prev=>prev.includes(key)?prev.filter(k=>k!==key):[...prev,key]);
   },[]);
 
   const patchCurrentSettings=useCallback((patch)=>{
@@ -1154,11 +1156,11 @@ function FCBBotV6(){
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{fontSize:9,color:"#6f95b8",letterSpacing:1}}>TODAY'S TRADES ({trades.length})</div>
               {trades.length>0&&<div style={{display:"flex",gap:6}}>
-                <button onClick={clearSelectedTrades} disabled={selectedTradeIndexes.length===0} style={{padding:"4px 10px",background:selectedTradeIndexes.length===0?"rgba(255,255,255,0.05)":"rgba(255,171,64,0.1)",border:`1px solid ${selectedTradeIndexes.length===0?"rgba(255,255,255,0.08)":"rgba(255,171,64,0.25)"}`,borderRadius:7,color:selectedTradeIndexes.length===0?"#5f86a8":"#ffab40",fontSize:8,cursor:selectedTradeIndexes.length===0?"not-allowed":"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 SELECTED ({selectedTradeIndexes.length})</button>
+                <button onClick={clearSelectedTrades} disabled={selectedTradeKeys.length===0} style={{padding:"4px 10px",background:selectedTradeKeys.length===0?"rgba(255,255,255,0.05)":"rgba(255,171,64,0.1)",border:`1px solid ${selectedTradeKeys.length===0?"rgba(255,255,255,0.08)":"rgba(255,171,64,0.25)"}`,borderRadius:7,color:selectedTradeKeys.length===0?"#5f86a8":"#ffab40",fontSize:8,cursor:selectedTradeKeys.length===0?"not-allowed":"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 SELECTED ({selectedTradeKeys.length})</button>
                 <button onClick={clearTrades} style={{padding:"4px 10px",background:"rgba(255,82,82,0.08)",border:"1px solid rgba(255,82,82,0.2)",borderRadius:7,color:"#ff5252",fontSize:8,cursor:"pointer",fontFamily:"'Orbitron',sans-serif",fontWeight:700}}>🗑 CLEAR ALL</button>
               </div>}
             </div>
-            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#5f86a8"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t} index={i} selected={selectedTradeIndexes.includes(i)} onToggleSelect={toggleTradeSelection}/>)}
+            {trades.length===0?<div style={{textAlign:"center",padding:"50px 20px",color:"#5f86a8"}}><div style={{fontSize:36,marginBottom:8}}>📋</div><div style={{fontSize:10}}>No trades yet</div></div>:trades.map((t,i)=><TradeCard key={i} trade={t} index={i} selected={selectedTradeKeys.includes((t.time||"")+t.name)} onToggleSelect={toggleTradeSelection}/>)}
           </>
         )}
 
@@ -1171,7 +1173,7 @@ function FCBBotV6(){
               <span style={{fontSize:8,color:"#6f95b8",flexShrink:0}}>📅</span>
               <select value={logDate} onChange={e=>{setLogDate(e.target.value);setLogs([]);}} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:7,padding:"5px 8px",color:"#c8ddf0",fontSize:9,fontFamily:"'Share Tech Mono',monospace",outline:"none"}}>
                 <option value="today">Today</option>
-                {logDates.filter(d=>d!==new Date().toISOString().split("T")[0]).map(d=><option key={d} value={d}>{d}</option>)}
+                {logDates.filter(d=>d!==new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"})).toLocaleDateString('en-CA')).map(d=><option key={d} value={d}>{d}</option>)}
               </select>
               <span style={{fontSize:8,color:"#5f86a8",flexShrink:0}}>{logs.length} lines</span>
             </div>
