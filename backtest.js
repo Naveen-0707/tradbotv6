@@ -321,7 +321,7 @@ async function replayDay(date, candleMap, niftyCandles) {
 
     if (m < 555 || m >= 920)                              continue;
     if (sched.blocked || !sched.strategies.length)         continue;
-    if (m - lastScanMin < 15) continue;
+    if (m - lastScanMin < 5) continue;
     lastScanMin = m;
 
     const locked   = dayTrades
