@@ -284,7 +284,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const hasFVG  = fvgHigh !== null && fvgHigh > fvgLow;
 
     // FIX-A: p1 is the retrace candle — it dips into the FVG, then closes above it
-    const retrace   = hasFVG && p1.l <= fvgHigh && p1.c > fvgLow;
+    const retrace   = hasFVG && p1.l >= fvgLow && p1.l <= fvgHigh && p1.c > fvgLow;
     // FIX-A: la is the engulf candle — it engulfs p1's full body
     const engulfing = la.c > p1.h && la.o <= p1.l;
 
@@ -323,7 +323,7 @@ function fcbAnalyze(candles, name, trades, niftyDir) {
     const hasFVG  = fvgLow !== null && fvgLow < fvgHigh;
 
     // FIX-A: p1 is the retrace candle
-    const retrace   = hasFVG && p1.h >= fvgLow && p1.c < fvgHigh;
+    const retrace   = hasFVG && p1.h <= fvgHigh && p1.h >= fvgLow && p1.c < fvgHigh;
     // FIX-A: la is the engulf candle
     const engulfing = la.c < p1.l && la.o >= p1.h;
 
