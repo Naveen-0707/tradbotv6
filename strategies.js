@@ -815,9 +815,6 @@ function stMacdAnalyze(candles, name, trades, niftyDir) {
   if (!macdCross) return null;
 
   // IMP-13: histogram expansion — current bar must be larger than previous bar
-  // (expanding cross, not a fading/weak cross about to reverse)
-  // BUG-9 FIX: guard moved BEFORE array access (was after, making it dead code)
-  if (histogram.length < 2) return null;
   const histNow  = histogram[histogram.length - 1];
   const histPrev = histogram[histogram.length - 2];
   if (Math.abs(histNow) <= Math.abs(histPrev)) return null;
@@ -1161,8 +1158,8 @@ function adxEmaAnalyze(candles, name, trades, niftyDir) {
 
   // ── SELL: -DI crossed above +DI AND EMA9 < EMA21 ──
   if (mDIPrev <= pDIPrev && mDINow > pDINow && e9n < e21n) {
-    // IMP-8: RSI must be in healthy momentum zone, not oversold
-    if (rsiNow !== null && (rsiNow > 65 || rsiNow < 35)) return null;
+    // IMP-8: RSI must not be deeply oversold or extremely overbought anomaly
+    if (rsiNow !== null && (rsiNow < 35 || rsiNow > 75)) return null;
 
     const risk    = Math.max(e21n - la.c, la.c * 0.004);
     const riskPct = (risk / la.c) * 100;
@@ -1213,7 +1210,7 @@ function scoreSignal(signals) {
   // IMP-11: conflict guard — skip if opposing side has meaningful score (>= 3)
   // This prevents trading when the system is genuinely split on direction.
   const CONFLICT_THRESHOLD = 3;
-  if (buyScore >= CONFLICT_THRESHOLD && sellScore >= CONFLICT_THRESHOLD) {
+  if (buyScore >= CONFLICT_THRESHOLD && sellScore >= CONFLICT_THRESHOLD && Math.abs(buyScore - sellScore) <= 1) {
     const stockName = signals[0]?.name || "UNKNOWN";
     console.warn(`[strategies] Conflict skip ${stockName}: BUY=${buyScore} SELL=${sellScore}`);
     return null;
