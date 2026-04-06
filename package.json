@@ -1,0 +1,31 @@
+{
+  "name": "tradbotv6",
+  "version": "6.2.0",
+  "description": "Professional-grade algorithmic trading bot for the Indian stock market (NSE)",
+  "type": "module",
+  "main": "bridge.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "protobufjs": "^7.2.5"
+  },
+  "scripts": {
+    "start": "node bridge.js",
+    "bot": "node bot.js",
+    "backtest": "node backtest.js",
+    "test:indicators": "node tests/indicators.smoke.js",
+    "test:strategies": "node tests/strategies.smoke.js",
+    "test:api": "node tests/bridge.api.smoke.js",
+    "test": "npm run test:indicators && npm run test:strategies && npm run test:api"
+  },
+  "keywords": [
+    "trading",
+    "nse",
+    "upstox",
+    "algo",
+    "bot"
+  ],
+  "author": "",
+  "license": "ISC"
+}
