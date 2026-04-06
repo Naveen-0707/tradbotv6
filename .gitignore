@@ -1,0 +1,8 @@
+node_modules/
+trades.db
+*.migrated.bak
+fcb_cmd.json
+config.json
+fcb_log_*.txt
+*.db-shm
+*.db-wal
