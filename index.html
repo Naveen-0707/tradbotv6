@@ -13,7 +13,7 @@
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.5/protobuf.min.js"></script>
-<script src="/proto-decoder.js"></script>
+<script type="module" src="/proto-decoder.js"></script>
 <style>
 html,body{margin:0;padding:0;background:#070d16;color:#dcecff;}
 *{box-sizing:border-box;}
@@ -97,14 +97,26 @@ const adminHeaders=()=>{
   return key?{"x-fcb-admin-key":key}:{};
 };
 const api={
-  get: url=>fetchWithRetry(url,{headers:{...adminHeaders()}}).then(r=>r.json()),
-  post:(url,body)=>fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json",...adminHeaders()},body:JSON.stringify(body)}).then(r=>r.json()),
+  get: async url=>{
+    const r=await fetchWithRetry(url,{headers:{...adminHeaders()}});
+    const d=await r.json();
+    if(!r.ok||d.ok===false){const e=d.error||"API GET Error";if(window.fcbAddAlert)window.fcbAddAlert("❌ "+e,"error");throw new Error(e);}
+    return d;
+  },
+  post: async (url,body)=>{
+    const r=await fetchWithRetry(url,{method:"POST",headers:{"Content-Type":"application/json",...adminHeaders()},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok||d.ok===false){const e=d.error||"API POST Error";if(window.fcbAddAlert)window.fcbAddAlert("❌ "+e,"error");throw new Error(e);}
+    return d;
+  },
   del: async(url,body)=>{
     const r=await fetchWithRetry(url,{method:"DELETE",headers:{"Content-Type":"application/json",...adminHeaders()},body:body?JSON.stringify(body):undefined});
     const ct=(r.headers.get("content-type")||"").toLowerCase();
-    if(ct.includes("application/json"))return r.json();
-    const text=await r.text();
-    return text?{ok:r.ok,raw:text}:{ok:r.ok};
+    let d={};
+    if(ct.includes("application/json"))d=await r.json();
+    else {const text=await r.text();d=text?{ok:r.ok,raw:text}:{ok:r.ok};}
+    if(!r.ok||d.ok===false){const e=d.error||"API DELETE Error";if(window.fcbAddAlert)window.fcbAddAlert("❌ "+e,"error");throw new Error(e);}
+    return d;
   },
   cmd:(cmd,extra={})=>api.post("/api/cmd",{cmd,...extra}),
 };
@@ -480,6 +492,7 @@ function FCBBotV6(){
   const[wsStatus,setWsStatus]    =useState("disconnected");
   const[niftyLtp,setNiftyLtp]    =useState(null);
   const[niftyChg,setNiftyChg]    =useState(null);
+  const[dbConnected,setDbConnected]=useState(false);
   const[alerts,setAlerts]        =useState([]);
   const[logDate,setLogDate]      =useState("today");
   const[logDates,setLogDates]    =useState([]);
@@ -531,6 +544,13 @@ function FCBBotV6(){
     setAlerts(p=>[...p.slice(-2),{id,msg,type}]);
     setTimeout(()=>setAlerts(p=>p.filter(a=>a.id!==id)),7000);
   },[]);
+
+  // Make globally available for native/API callbacks
+  useEffect(()=>{
+    window.fcbAddAlert = addAlert;
+    return () => { delete window.fcbAddAlert; };
+  },[addAlert]);
+
 
   // Parse a raw log line into {ts, type, msg}
   const parseLine=line=>{
@@ -605,7 +625,13 @@ function FCBBotV6(){
             if(d.signals.length>0){addAlert(`🎯 ${d.signals.length} signal(s) from bot`,"success");window.FCBNotify?.send(`🎯 ${d.signals.length} Signal!`,d.signals.map(s=>`${s.name} ${s.direction} ₹${s.entry} S:${s.score}`).join(" | "));}
           }
           if(d.type==="trades"&&d.trades)setTrades(d.trades);
-          if(d.type==="log"&&d.line)appendLines([d.line]);
+          if(d.type==="log"&&d.line){
+            appendLines([d.line]);
+            const parsed=parseLine(d.line);
+            if(parsed.msg.includes("🚨MACRO")||parsed.type.includes("error")||parsed.msg.toLowerCase().includes("fatal")){
+              addAlert(parsed.msg,"error");
+            }
+          }
           // BUG-7 FIX: lastLogTs (state) is stale here because useEffect dep is [profile].
           // lastLogTsRef.current is always current — use it for the catch-up fetch.
           if(d.type==="connected"){
@@ -647,6 +673,7 @@ function FCBBotV6(){
       try{
         const d=await api.get("/api/status");
         if(typeof d.paperMode==="boolean")setPaperMode(d.paperMode);
+        if(typeof d.dbConnected==="boolean")setDbConnected(d.dbConnected);
         if(Number.isFinite(Number(d.brokeragePerOrder)))setBrokeragePerOrder(Number(d.brokeragePerOrder));
         if(typeof d.version==="string"&&d.version.trim())setAppVersion(d.version.trim());
         if(d.modeSettings){
@@ -985,6 +1012,9 @@ function FCBBotV6(){
 
         {/* ── ROW 2: Status chips ── */}
         <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4,fontSize:7,overflowX:"auto"}}>
+          <span style={{padding:"2px 6px",borderRadius:5,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:dbConnected?"#00e676":"#ff5252",fontWeight:700}}>
+            {dbConnected?"🗃️ DB ✓":"🗃️ DB ✗"}
+          </span>
           <span style={{padding:"2px 6px",borderRadius:5,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",color:wsStatus==="connected"?"#00e676":wsStatus==="reconnecting"?"#ffc107":"#ff5252",fontWeight:700}}>
             {wsStatus==="connected"?"📡 WS ✓":wsStatus==="reconnecting"?"🔄 WS...":"📡 WS ✗"}
           </span>
