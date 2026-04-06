@@ -1,12 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  FCB BOT V6 — indicators.js
-//  Pure math library. No side effects. No file I/O. No API calls.
-//  All functions are deterministic: same input → same output, always.
-//  Required by: strategies.js
-//  Candle shape: { ts, o, h, l, c, v }
-// ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
 
 // ─── GUARD ───────────────────────────────────────────────────────────────────
 // Every public function validates its input before computing.
@@ -439,7 +432,7 @@ function isStale(candles, maxMinutes = 3) {
 }
 
 // ─── EXPORTS ──────────────────────────────────────────────────────────────────
-module.exports = {
+export {
   // Core math
   smoothed,
   ema,
@@ -467,3 +460,4 @@ module.exports = {
   todayCandles,
   isStale,
 };
+

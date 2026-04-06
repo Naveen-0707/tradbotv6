@@ -1,9 +1,5 @@
-// proto-decoder.js — FCB Bot v5
-// Loads MarketDataFeed.proto from localhost and exposes
-// window.FCBProto.decode(arrayBuffer) → plain JS object
-// Uses protobufjs v7 full build from cdnjs (no npm needed)
 
-window.FCBProto = {
+const FCBProto = {
   _FeedResponse: null,
 
   async init() {
@@ -43,3 +39,7 @@ window.FCBProto = {
     });
   }
 };
+
+export default FCBProto;
+window.FCBProto = FCBProto; // Maintain global access for existing index.html scripts
+

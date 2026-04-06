@@ -1,37 +1,19 @@
-#!/usr/bin/env node
-// ═══════════════════════════════════════════════════════════════════════════
-//  FCB BOT V6 — bridge.js
-//  HTTP server + SSE event stream + WebSocket auth proxy.
-//  Serves index.html and all static files to the browser.
-//
-//  NEW IN V6 (vs V5):
-//    • Per-day log file watching — auto-switches at midnight IST
-//    • GET /api/logs/download?format=txt|csv|json&date= — single-click download
-//    • GET /api/logs?since=<timestamp> — catch-up endpoint on UI reconnect
-//    • GET /api/logs/dates — list all available log dates for date picker
-//    • POST /api/cmd — "clear_trades" added to allowed list (BUG #8 fix)
-//    • SSE sends "connected" event on new connection; client catches up via GET /api/logs?since=
-//    • Bridge console output NEVER written to bot log files (logs stay clean)
-//
-//  UNCHANGED FROM V5 (working well):
-//    • /ws-auth proxy to Upstox WS auth endpoint
-//    • /events SSE stream (25s heartbeat)
-//    • Static file serving with path traversal guard
-//    • Optional bot.js child spawn (RUN_BOT=1 env var)
-//    • CORS headers on all responses
-// ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
+import http from "node:http";
+import https from "node:https";
+import fs from "node:fs";
+import { promises as fsp } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const http         = require("http");
-const https        = require("https");
-const fs           = require("fs");
-const fsp          = fs.promises;
-const path         = require("path");
-const { spawn, exec } = require("child_process");
+import { getAllTrades, getAllSignals, clearTrades as dbClearTrades, clearTradesByIndexes as dbClearTradesByIndexes, isDbOpen } from "./db.js";
+
 
 const PORT = 8080;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const DIR  = __dirname;
+
 const MAX_API_BODY_BYTES = 1_000_000; // 1 MB safeguard against oversized JSON payloads
 const APP_VERSION = "6.1.0";
 const ADMIN_KEY = (process.env.FCB_ADMIN_KEY || "").trim();
@@ -317,27 +299,31 @@ getOrCreateLogWatcher();
 setInterval(getOrCreateLogWatcher, 60000);
 
 // ─── TRADES FILE WATCHER ─────────────────────────────────────────────────────
-let lastTradeCount = -1;
-let lastTradesMtimeMs = 0;
-fs.watchFile(TRD_FILE, { interval: 5000 }, () => {
-  const trades = readJSON(TRD_FILE, []);
-  let mtimeMs = 0;
-  try { mtimeMs = fs.statSync(TRD_FILE).mtimeMs || 0; } catch {}
+// ─── DB WATCHING (Polling) ────────────────────────────────────────────────────
+let lastTradesStr = "";
+setInterval(() => {
+  try {
+    const trades = getAllTrades();
+    const str = JSON.stringify(trades);
+    if (str !== lastTradesStr) {
+      lastTradesStr = str;
+      sseWrite({ type: "trades", trades });
+    }
+  } catch (e) { /* DB might be busy */ }
+}, 3000);
 
-  // Push trade updates when file content changes (not only when count changes),
-  // so UI can refresh live LTP / Live P&L for open trades.
-  if (trades.length !== lastTradeCount || mtimeMs !== lastTradesMtimeMs) {
-    lastTradeCount = trades.length;
-    lastTradesMtimeMs = mtimeMs;
-    sseWrite({ type: "trades", trades });
-  }
-});
+let lastSignalsStr = "";
+setInterval(() => {
+  try {
+    const signals = getAllSignals();
+    const str = JSON.stringify(signals);
+    if (str !== lastSignalsStr) {
+      lastSignalsStr = str;
+      sseWrite({ type: "signals", signals });
+    }
+  } catch (e) { /* DB might be busy */ }
+}, 1000);
 
-// ─── SIGNALS FILE WATCHER ────────────────────────────────────────────────────
-fs.watchFile(SIG_FILE, { interval: 1000 }, () => {
-  const signals = readJSON(SIG_FILE, []);
-  sseWrite({ type: "signals", signals });
-});
 
 // ─── OPTIONAL BOT.JS CHILD PROCESS ───────────────────────────────────────────
 // Activated with: RUN_BOT=1 node bridge.js
@@ -398,11 +384,12 @@ const server = http.createServer((req, res) => {
     sseClients.add(res);
 
     // Send current state immediately on connect
-    const initTrades  = readJSON(TRD_FILE, []);
-    const initSignals = readJSON(SIG_FILE, []);
+    const initTrades  = getAllTrades();
+    const initSignals = getAllSignals();
     res.write(`data: ${JSON.stringify({ type: "trades",  trades:  initTrades  })}\n\n`);
     res.write(`data: ${JSON.stringify({ type: "signals", signals: initSignals })}\n\n`);
     res.write(`data: ${JSON.stringify({ type: "connected", ts: Date.now()      })}\n\n`);
+
 
     req.on("close", () => sseClients.delete(res));
     return;
@@ -565,7 +552,7 @@ const server = http.createServer((req, res) => {
         if (req.method === "POST" && urlPath === "/api/cmd") {
           if (!requireAdmin(req, res)) return;
           const { cmd, strats } = parsed;
-          const currentTrades = await readJSONAsync(TRD_FILE, []);
+          const currentTrades = getAllTrades();
           if (typeof cmd !== "string" || !cmd.trim()) {
             return json(res, { ok: false, error: "cmd must be a non-empty string" }, 400);
           }
@@ -629,13 +616,13 @@ const server = http.createServer((req, res) => {
 
         // ── GET /api/trades ──────────────────────────────────────────────
         if (req.method === "GET" && urlPath === "/api/trades") {
-          return json(res, await readJSONAsync(TRD_FILE, []));
+          return json(res, getAllTrades());
         }
 
         // ── DELETE /api/trades ───────────────────────────────────────────
         if (req.method === "DELETE" && urlPath === "/api/trades") {
           if (!requireAdmin(req, res)) return;
-          const currentTrades = await readJSONAsync(TRD_FILE, []);
+          const currentTrades = getAllTrades();
           const idx = parsed.indexes;
 
           // Mode 1: selective delete by indexes
@@ -648,8 +635,7 @@ const server = http.createServer((req, res) => {
               return json(res, { ok: false, error: "Cannot delete open live trades. Square them off first." }, 409);
             }
             const toDelete = new Set(idx);
-            const nextTrades = currentTrades.filter((_, i) => !toDelete.has(i));
-            if (!await writeJSONAsync(TRD_FILE, nextTrades)) return failWrite(res, "trades");
+            const nextTrades = dbClearTradesByIndexes([...toDelete]);
             if (!await writeJSONAsync(CMD_FILE, {
               cmd: "delete_trades",
               indexes: [...toDelete],
@@ -663,8 +649,7 @@ const server = http.createServer((req, res) => {
           if (hasProtectedLiveTrades(currentTrades)) {
             return json(res, { ok: false, error: "Cannot clear while open live trades exist. Square them off first." }, 409);
           }
-          if (!await writeJSONAsync(TRD_FILE, [])) return failWrite(res, "trades");
-          if (!await writeJSONAsync(SIG_FILE, [])) return failWrite(res, "signals");
+          dbClearTrades();
           if (!await writeJSONAsync(CMD_FILE, { cmd: "clear_trades", ts: Date.now() })) return failWrite(res, "command");
           sseWrite({ type: "trades",  trades:  [] });
           sseWrite({ type: "signals", signals: [] });
@@ -673,7 +658,7 @@ const server = http.createServer((req, res) => {
 
         // ── GET /api/signals ─────────────────────────────────────────────
         if (req.method === "GET" && urlPath === "/api/signals") {
-          return json(res, await readJSONAsync(SIG_FILE, []));
+          return json(res, getAllSignals());
         }
 
         // ── GET /api/status ──────────────────────────────────────────────
@@ -690,6 +675,7 @@ const server = http.createServer((req, res) => {
             botRunning,
             version:        APP_VERSION,
             paperMode:      cfg.paperMode       !== false,
+            dbConnected:    isDbOpen(),
             wallet:         active.wallet,
             riskPct:        active.riskPct,
             maxTrades:      active.maxTrades,
@@ -727,7 +713,7 @@ const server = http.createServer((req, res) => {
         // ── GET /api/pnl ─────────────────────────────────────────────────
         if (req.method === "GET" && urlPath === "/api/pnl") {
           const today  = todayStr();
-          const trades = await readJSONAsync(TRD_FILE, []);
+          const trades = getAllTrades();
           const daily  = trades.filter(t => t.date === today);
           const pnl    = daily.reduce((s, t) => s + (t.pnl || 0), 0);
           return json(res, {

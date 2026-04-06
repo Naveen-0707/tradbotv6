@@ -58,9 +58,8 @@
 //           than crosses from a neutral momentum zone.
 // ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
 
-const {
+import {
   ema,
   calcATR,
   calcRSI,
@@ -75,7 +74,8 @@ const {
   macdCrossDirection,
   isBBSqueeze,
   todayCandles,
-} = require("./indicators");
+} from "./indicators.js";
+
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
@@ -1474,7 +1474,7 @@ function analyzeStock({
 //  EXPORTS — identical interface to V6/V7; bot.js requires no changes
 // ═══════════════════════════════════════════════════════════════════════════
 
-module.exports = {
+export {
   analyzeStock,
   getSchedule,
   STOCKS,
@@ -1485,3 +1485,4 @@ module.exports = {
   ANALYZERS,
   scoreSignal,
 };
+

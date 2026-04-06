@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-"use strict";
 
-const assert = require("assert");
-const {
+import assert from "node:assert";
+import {
   getSchedule,
   scoreSignal,
   hasOpenPosition,
   analyzeStock,
-} = require("../strategies");
+} from "../strategies.js";
+
 
 // Schedule boundaries
 assert.strictEqual(getSchedule(554).blocked, true, "Pre-market should be blocked");

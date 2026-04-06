@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-"use strict";
 
-const assert = require("assert");
-const fs = require("fs");
-const path = require("path");
-const { spawn } = require("child_process");
+import assert from "node:assert";
+import fs from "node:fs";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { saveTrades } from "../db.js";
+
 
 const ADMIN_KEY = "smoke-admin-key";
 const BASE = "http://127.0.0.1:8080";
@@ -30,14 +31,13 @@ async function waitUntilUp(retries = 30) {
 }
 
 async function main() {
-  const TRD_FILE = path.join(process.cwd(), "fcb_trades.json");
   const seedTrades = [
     { name: "SBIN", status: "OPEN", qty: 1, paper: false },
     { name: "RELIANCE", status: "PAPER", qty: 1, paper: true },
     { name: "INFY", status: "PAPER", qty: 1 },
     { name: "TCS", status: "PAPER", qty: 1 },
   ];
-  fs.writeFileSync(TRD_FILE, JSON.stringify(seedTrades, null, 2));
+  saveTrades(seedTrades);
 
   const child = spawn("node", ["bridge.js"], {
     cwd: process.cwd(),
@@ -124,7 +124,8 @@ async function main() {
       });
       assert.strictEqual(r.status, 200, "Expected 200 for selective delete");
       assert.strictEqual(r.json?.ok, true, "Expected selective delete ok=true");
-      const tradesAfter = JSON.parse(fs.readFileSync(TRD_FILE, "utf8"));
+      const reqAfter = await req("/api/trades");
+      const tradesAfter = reqAfter.json || [];
       assert.strictEqual(tradesAfter.length, 3, "Expected one trade to be deleted");
       assert.deepStrictEqual(tradesAfter.map(t => t.name), ["SBIN", "RELIANCE", "TCS"], "Expected INFY (index 2) to be removed");
     }

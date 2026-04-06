@@ -33,24 +33,29 @@
 //    node backtest.js --date 2025-03-10 --speed 0  # instant (no UI animation)
 // ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
 
-const https = require("https");
-const fs    = require("fs");
-const path  = require("path");
+import https from "node:https";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { saveTrades as dbSaveTrades, saveSignals as dbSaveSignals } from "./db.js";
 
 // ─── IMPORTS (read-only — zero changes to these files) ───────────────────────
-const {
+import {
   analyzeStock,
   getSchedule,
   getStocksForTier,
   hasOpenPosition,
   markLoss,
   STOCKS,
-} = require("./strategies");
+} from "./strategies.js";
 
 // ─── PATHS ────────────────────────────────────────────────────────────────────
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const DIR      = __dirname;
+
 const CFG_FILE = path.join(DIR, "config.json");
 const TRD_FILE = path.join(DIR, "fcb_trades.json");
 const SIG_FILE = path.join(DIR, "fcb_signals.json");
@@ -181,12 +186,12 @@ async function fetchHistoricalCandles(instrumentKey, fromDate, toDate) {
   return [];
 }
 
-// ─── FILE WRITERS (same files bridge.js watches → UI updates via SSE) ─────────
+// ─── FILE WRITERS (same files bridge.js polls → UI updates via SSE) ─────────
 let allBtTrades  = [];
 let allBtSignals = [];
 
-function saveTrades()  { try { fs.writeFileSync(TRD_FILE, JSON.stringify(allBtTrades,  null, 2)); } catch {} }
-function saveSignals() { try { fs.writeFileSync(SIG_FILE, JSON.stringify(allBtSignals, null, 2)); } catch {} }
+function saveTrades()  { try { dbSaveTrades(allBtTrades); } catch {} }
+function saveSignals() { try { dbSaveSignals(allBtSignals); } catch {} }
 
 // ─── LOGGING (writes to same daily log files bridge.js streams) ──────────────
 let activeLogFile = path.join(DIR, `fcb_log_${istDateStr()}.txt`);

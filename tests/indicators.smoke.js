@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-"use strict";
 
-const assert = require("assert");
-const {
+import assert from "node:assert";
+import {
   ema,
   calcATR,
   calcRSI,
   calcMACD,
   calcSuperTrend,
   vwap,
-} = require("../indicators");
+} from "../indicators.js";
+
 
 function mkCandles(n, start = 100) {
   const arr = [];

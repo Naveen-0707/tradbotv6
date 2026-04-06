@@ -22,26 +22,31 @@
 //  #14  Paper in live count   → tradesToday() counts only !t.paper trades
 // ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
 
-const https      = require("https");
-const fs         = require("fs");
-const path       = require("path");
-const { exec }   = require("child_process");
+import https from "node:https";
+import fs from "node:fs";
+import path from "node:path";
+import { exec } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const {
+import {
   analyzeStock,
   getSchedule,
   getStocksForTier,
   hasOpenPosition,
   markLoss,
   STOCKS,
-} = require("./strategies");
+} from "./strategies.js";
 
-const { isStale, calcATR } = require("./indicators");
+import { isStale, calcATR } from "./indicators.js";
+import { getAllTrades, saveTrades as dbSaveTrades, saveSignals as dbSaveSignals, clearTrades as dbClearTrades, clearTradesByIndexes as dbClearTradesByIndexes } from "./db.js";
 
 // ─── PATHS ────────────────────────────────────────────────────────────────────
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const DIR      = __dirname;
+
 const CFG_FILE = path.join(DIR, "config.json");
 const TRD_FILE = path.join(DIR, "fcb_trades.json");
 const SIG_FILE = path.join(DIR, "fcb_signals.json");
@@ -360,41 +365,18 @@ const modifyOrder = (id, triggerPrice, qty) =>
 let trades = [];
 
 function loadTrades() {
-  // Try primary file first, fall back to backup if corrupt
-  const tryLoad = (file) => {
-    try {
-      const raw = fs.readFileSync(file, "utf8");
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) throw new Error("not an array");
-      return parsed;
-    } catch { return null; }
-  };
-
-  const primary = tryLoad(TRD_FILE);
-  if (primary !== null) { trades = primary; return; }
-
-  log("⚠️ fcb_trades.json corrupt — trying backup", "WARN");
-  const backup = tryLoad(TRD_FILE + ".bak");
-  if (backup !== null) {
-    trades = backup;
-    log(`⚠️ Recovered ${trades.length} trade(s) from backup`, "WARN");
-    saveTrades(); // restore primary from backup
-    return;
+  try {
+    trades = getAllTrades();
+    if (!Array.isArray(trades)) trades = [];
+  } catch (e) {
+    log(`⚠️ DB load error — starting fresh: ${e.message}`, "WARN");
+    trades = [];
   }
-
-  log("⚠️ Both trade files unreadable — starting fresh", "WARN");
-  trades = [];
 }
+
 function saveTrades() {
   try {
-    const json = JSON.stringify(trades, null, 2);
-    // Validate before writing — never save corrupt data
-    JSON.parse(json);
-    const tmp = TRD_FILE + ".tmp";
-    fs.writeFileSync(tmp, json);
-    fs.renameSync(tmp, TRD_FILE); // atomic on Linux/Android
-    // Keep a rolling backup (last known good)
-    fs.writeFileSync(TRD_FILE + ".bak", json);
+    dbSaveTrades(trades);
   } catch (e) { log(`⚠️ saveTrades: ${e.message}`, "WARN"); }
 }
 
@@ -1280,7 +1262,7 @@ async function scan(strategyNames) {
     .flatMap(r => r.value);
 
     // Persist signals for UI
-    try { fs.writeFileSync(SIG_FILE, JSON.stringify(signals, null, 2)); } catch { /* ignore */ }
+    try { dbSaveSignals(signals); } catch { /* ignore */ }
 
     if (signals.length === 0) {
       if (nearMisses.length > 0) {
@@ -1483,8 +1465,7 @@ function watchCMD() {
         // BUG #8 FIX: atomically clears in-memory trades AND disk file
         case "clear_trades":
           trades = [];
-          saveTrades();
-          try { fs.writeFileSync(SIG_FILE, "[]"); } catch { /* ignore */ }
+          dbClearTrades();
           log("Trades cleared via UI command", "INFO");
           break;
 
@@ -1495,8 +1476,7 @@ function watchCMD() {
             );
             if (toDelete.size > 0) {
               const beforeDelete = trades.length;
-              trades = trades.filter((_, i) => !toDelete.has(i));
-              saveTrades();
+              trades = dbClearTradesByIndexes([...toDelete]);
               log(`Deleted ${beforeDelete - trades.length} selected trade(s) via UI command`, "INFO");
             }
           }

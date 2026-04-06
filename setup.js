@@ -24,13 +24,16 @@
 //  bridge.js ensureModeSettings() also reads this same structure.
 // ═══════════════════════════════════════════════════════════════════════════
 
-"use strict";
 
-const readline = require("readline");
-const fs       = require("fs");
-const path     = require("path");
+import readline from "node:readline";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const DIR      = __dirname;
+
 const CFG_FILE = path.join(DIR, "config.json");
 const CMD_FILE = path.join(DIR, "fcb_cmd.json");
 
