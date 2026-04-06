@@ -1,0 +1,51 @@
+{
+  "project": "tradbotv6",
+  "branchName": "ralph/v6.2-modernization",
+  "description": "tradbotv6 v6.2 - Engineering Modernization: Standardize on ESM, implement SQLite persistence, and enhance UI error reporting.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Convert codebase to ES Modules (ESM)",
+      "description": "As a developer, I want to use standard ESM (import/export) across all files so that the codebase is modern and tool-friendly.",
+      "acceptanceCriteria": [
+        "Update all files to use ESM syntax instead of CommonJS",
+        "Generate or update package.json with \"type\": \"module\"",
+        "All smoke tests in tests/ pass using ESM",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Migrate trade state to SQLite",
+      "description": "As a user, I want trades to be stored in a reliable database instead of JSON files to prevent corruption and improve performance.",
+      "acceptanceCriteria": [
+        "Include better-sqlite3 or equivalent lightweight DB",
+        "Initialize trades.db and migrate schema from fcb_trades.json",
+        "Update bot.js and bridge.js to use SQLite for persistence",
+        "Verify persistence across bot restarts",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Centralized UI Error Notification System",
+      "description": "As a user, I want to see clear, actionable errors in the dashboard when bot operations fail.",
+      "acceptanceCriteria": [
+        "Add a toast or banner notification component to index.html",
+        "Hook into bridge API results to display errors visually",
+        "Verify error reporting for 'Unauthorized' and 'Write APIs Locked'",
+        "Verify in browser using dev-browser skill",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
